@@ -1,0 +1,124 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Scrapyd",
+  "projectDescription": "A service daemon to run Scrapy spiders with HTTP API control",
+  "theme": "aspen",
+  "primaryColor": "#5d6c75",
+  "lightColor": "#b5bec1",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/overview",
+              "concepts/projects-versions",
+              "concepts/jobs-scheduling"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/deploying-projects",
+              "operations/running-spiders",
+              "operations/monitoring",
+              "operations/job-management"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/settings-reference",
+              "configuration/authentication",
+              "configuration/environment-variables"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "HTTP API",
+            "pages": [
+              "api/overview",
+              "api/schedule",
+              "api/cancel",
+              "api/status",
+              "api/daemon-status",
+              "api/list-jobs",
+              "api/list-projects",
+              "api/list-versions",
+              "api/list-spiders",
+              "api/add-version",
+              "api/delete-project",
+              "api/delete-version"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Advanced",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "advanced/architecture",
+              "advanced/interfaces",
+              "advanced/components"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "advanced/troubleshooting",
+              "advanced/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Deploy and manage multiple Scrapy projects",
+    "HTTP JSON API for remote control",
+    "Job scheduling with priority queues",
+    "Concurrent spider execution",
+    "Web UI for monitoring",
+    "Version management for projects",
+    "Authentication support",
+    "Extensible plugin architecture"
+  ],
+  "publicApiSurface": [
+    "schedule.json - Schedule a spider to run",
+    "cancel.json - Cancel a running or pending job",
+    "status.json - Get job status",
+    "daemonstatus.json - Get daemon load status",
+    "listjobs.json - List pending, running, and finished jobs",
+    "listprojects.json - List all projects",
+    "listversions.json - List project versions",
+    "listspiders.json - List spiders in a project",
+    "addversion.json - Deploy a new project version",
+    "delproject.json - Delete a project",
+    "delversion.json - Delete a project version",
+    "scrapyd - CLI command to start the daemon",
+    "IEggStorage - Interface for project storage",
+    "IPoller - Interface for job polling",
+    "ISpiderQueue - Interface for job queuing",
+    "ISpiderScheduler - Interface for job scheduling",
+    "IEnvironment - Interface for process environment",
+    "IJobStorage - Interface for finished job storage"
+  ]
+}

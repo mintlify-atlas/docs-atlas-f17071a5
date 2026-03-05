@@ -1,0 +1,168 @@
+---
+title: Configuration Overview
+description: Learn how to configure Scrapyd using configuration files and understand configuration precedence
+---
+
+Scrapyd uses a hierarchical configuration system based on INI-style configuration files. This allows you to customize Scrapyd's behavior at various levels, from system-wide defaults to project-specific settings.
+
+## Configuration File Format
+
+Scrapyd configuration files use the standard INI format with sections and key-value pairs:
+
+```ini
+[scrapyd]
+bind_address = 127.0.0.1
+http_port = 6800
+max_proc = 0
+max_proc_per_cpu = 4
+
+[services]
+schedule.json = scrapyd.webservice.Schedule
+cancel.json = scrapyd.webservice.Cancel
+```
+
+The two main sections are:
+
+- **`[scrapyd]`** - Contains all Scrapyd daemon settings
+- **`[services]`** - Defines API endpoints and their implementations
+
+## Configuration File Locations
+
+Scrapyd reads configuration files from multiple locations in a specific order. Each file can override settings from the previous ones:
+
+<Steps>
+  <Step title="Windows system configuration">
+    `c:\scrapyd\scrapyd.conf` (Windows only)
+  </Step>
+  
+  <Step title="Unix system configuration">
+    `/etc/scrapyd/scrapyd.conf` (Linux/macOS)
+  </Step>
+  
+  <Step title="System configuration directory">
+    `/etc/scrapyd/conf.d/*` (all files in alphabetical order)
+  </Step>
+  
+  <Step title="Current directory">
+    `scrapyd.conf` in the current working directory
+  </Step>
+  
+  <Step title="User home directory">
+    `~/.scrapyd.conf` in the home directory of the user running Scrapyd
+  </Step>
+  
+  <Step title="Scrapy project configuration">
+    The closest `scrapy.cfg` file, starting from the current directory and traversing upward
+  </Step>
+</Steps>
+
+<Note>
+  Configuration values in later files override values from earlier files. This allows you to have system-wide defaults while customizing settings per user or per project.
+</Note>
+
+## Default Configuration
+
+Scrapyd always loads a built-in default configuration first, which is then overridden by the files listed above. Here's the complete default configuration:
+
+```ini
+[scrapyd]
+# Application options
+application       = scrapyd.app.application
+bind_address      = 127.0.0.1
+http_port         = 6800
+unix_socket_path  =
+username          =
+password          =
+spiderqueue       = scrapyd.spiderqueue.SqliteSpiderQueue
+
+# Poller options
+poller            = scrapyd.poller.QueuePoller
+poll_interval     = 5.0
+
+# Launcher options
+launcher          = scrapyd.launcher.Launcher
+max_proc          = 0
+max_proc_per_cpu  = 4
+logs_dir          = logs
+items_dir         =
+jobs_dir          =
+jobs_to_keep      = 5
+runner            = scrapyd.runner
+
+# Web UI and API options
+webroot           = scrapyd.website.Root
+prefix_header     = x-forwarded-prefix
+debug             = off
+
+# Egg storage options
+eggstorage        = scrapyd.eggstorage.FilesystemEggStorage
+eggs_dir          = eggs
+
+# Job storage options
+jobstorage        = scrapyd.jobstorage.MemoryJobStorage
+finished_to_keep  = 100
+
+# Directory options
+dbs_dir           = dbs
+
+[services]
+schedule.json     = scrapyd.webservice.Schedule
+cancel.json       = scrapyd.webservice.Cancel
+status.json       = scrapyd.webservice.Status
+addversion.json   = scrapyd.webservice.AddVersion
+listprojects.json = scrapyd.webservice.ListProjects
+listversions.json = scrapyd.webservice.ListVersions
+listspiders.json  = scrapyd.webservice.ListSpiders
+delproject.json   = scrapyd.webservice.DeleteProject
+delversion.json   = scrapyd.webservice.DeleteVersion
+listjobs.json     = scrapyd.webservice.ListJobs
+daemonstatus.json = scrapyd.webservice.DaemonStatus
+```
+
+## Configuration Precedence
+
+The complete precedence order from lowest to highest priority is:
+
+1. **Built-in defaults** - The default configuration shown above
+2. **System configuration** - `/etc/scrapyd/scrapyd.conf` or `c:\scrapyd\scrapyd.conf`
+3. **System configuration directory** - Files in `/etc/scrapyd/conf.d/` (alphabetically)
+4. **Local configuration** - `scrapyd.conf` in the current directory
+5. **User configuration** - `~/.scrapyd.conf` in the user's home directory
+6. **Scrapy configuration** - The closest `scrapy.cfg` file
+7. **Environment variables** - Specific environment variables (see [Environment Variables](/configuration/environment-variables))
+
+<Tip>
+  Use environment variables for deployment-specific settings like `bind_address` and `http_port`, and configuration files for more stable settings like `max_proc_per_cpu` and directory paths.
+</Tip>
+
+## Creating a Custom Configuration
+
+To customize Scrapyd, create a configuration file in one of the locations listed above. You only need to include the settings you want to change:
+
+```ini scrapyd.conf
+[scrapyd]
+# Allow external connections
+bind_address = 0.0.0.0
+
+# Run more concurrent jobs
+max_proc_per_cpu = 8
+
+# Store finished jobs in SQLite instead of memory
+jobstorage = scrapyd.jobstorage.SqliteJobStorage
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Settings Reference" icon="list" href="/configuration/settings-reference">
+    Complete reference of all available configuration settings
+  </Card>
+  
+  <Card title="Authentication" icon="lock" href="/configuration/authentication">
+    Set up basic authentication to secure your Scrapyd instance
+  </Card>
+  
+  <Card title="Environment Variables" icon="terminal" href="/configuration/environment-variables">
+    Override settings using environment variables
+  </Card>
+</CardGroup>

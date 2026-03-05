@@ -1,0 +1,307 @@
+---
+title: 'delversion.json'
+description: 'Delete a specific version of a project'
+---
+
+## Overview
+
+Delete a specific version of a project from egg storage. If this is the last version of the project, the project is also deleted.
+
+## HTTP Method
+
+```
+POST /delversion.json
+```
+
+## Parameters
+
+<ParamField path="project" type="string" required>
+  The project name
+</ParamField>
+
+<ParamField path="version" type="string" required>
+  The version identifier to delete
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success, `"error"` on failure
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+## Examples
+
+### Delete a Version
+
+```bash
+curl http://localhost:6800/delversion.json \
+  -d project=myproject \
+  -d version=r99
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename"
+}
+```
+
+### With Authentication
+
+```bash
+curl -u username:password http://localhost:6800/delversion.json \
+  -d project=myproject \
+  -d version=r99
+```
+
+## Error Cases
+
+### Project Not Found
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "project 'myproject' not found"
+}
+```
+
+### Version Not Found
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "version 'r99' not found"
+}
+```
+
+### Missing Required Parameter
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "'project' parameter is required"
+}
+```
+
+## What Gets Deleted
+
+When you delete a version:
+
+1. The egg file for that version is removed from egg storage
+2. The spider cache for that version is cleared
+3. If this was the last version, the project is deleted too
+
+<Warning>
+  Jobs scheduled with the deleted version cannot run. Cancel or reschedule them with a different version.
+</Warning>
+
+## Use Cases
+
+### Delete Old Versions
+
+Keep only the 5 most recent versions:
+
+```python
+import requests
+
+project = "myproject"
+keep_latest = 5
+
+# Get all versions
+response = requests.get(f"http://localhost:6800/listversions.json?project={project}")
+versions = response.json()['versions']
+
+print(f"Total versions: {len(versions)}")
+
+if len(versions) > keep_latest:
+    old_versions = versions[:-keep_latest]
+    
+    print(f"Deleting {len(old_versions)} old versions...")
+    
+    for version in old_versions:
+        delete_response = requests.post(
+            "http://localhost:6800/delversion.json",
+            data={"project": project, "version": version}
+        )
+        
+        if delete_response.json()['status'] == 'ok':
+            print(f"  ✓ Deleted {version}")
+        else:
+            print(f"  ✗ Failed to delete {version}: {delete_response.json()['message']}")
+    
+    print(f"Kept versions: {', '.join(versions[-keep_latest:])}")
+else:
+    print(f"No cleanup needed (only {len(versions)} versions)")
+```
+
+### Delete Pre-release Versions
+
+```python
+import requests
+from packaging import version
+
+project = "myproject"
+
+# Get all versions
+response = requests.get(f"http://localhost:6800/listversions.json?project={project}")
+versions = response.json()['versions']
+
+for v in versions:
+    try:
+        parsed = version.parse(v)
+        if parsed.is_prerelease:
+            print(f"Deleting pre-release version: {v}")
+            delete_response = requests.post(
+                "http://localhost:6800/delversion.json",
+                data={"project": project, "version": v}
+            )
+            
+            if delete_response.json()['status'] == 'ok':
+                print(f"  ✓ Deleted {v}")
+    except Exception as e:
+        print(f"  ○ Skipped {v} (not a valid version)")
+```
+
+### Delete Versions Older Than Date
+
+```python
+import requests
+from datetime import datetime, timedelta
+import os
+
+project = "myproject"
+max_age_days = 30
+
+# Get all versions
+response = requests.get(f"http://localhost:6800/listversions.json?project={project}")
+versions = response.json()['versions']
+
+cutoff_date = datetime.now() - timedelta(days=max_age_days)
+
+for version in versions:
+    # In a real scenario, you'd need to track upload dates
+    # This is a simplified example
+    
+    # For demo, assume version format includes date: r2026-03-05
+    if version.startswith('r'):
+        try:
+            date_str = version[1:]  # Remove 'r' prefix
+            version_date = datetime.strptime(date_str, '%Y-%m-%d')
+            
+            if version_date < cutoff_date:
+                print(f"Deleting old version: {version}")
+                delete_response = requests.post(
+                    "http://localhost:6800/delversion.json",
+                    data={"project": project, "version": version}
+                )
+                
+                if delete_response.json()['status'] == 'ok':
+                    print(f"  ✓ Deleted {version}")
+        except ValueError:
+            pass  # Skip versions that don't match the format
+```
+
+### Cleanup Across Multiple Nodes
+
+```python
+import requests
+
+nodes = [
+    "http://node1:6800",
+    "http://node2:6800",
+    "http://node3:6800"
+]
+
+project = "myproject"
+version = "r99"
+
+for node in nodes:
+    response = requests.post(
+        f"{node}/delversion.json",
+        data={"project": project, "version": version}
+    )
+    
+    if response.json()['status'] == 'ok':
+        print(f"✓ {node}: Deleted {version}")
+    else:
+        message = response.json()['message']
+        if 'not found' in message:
+            print(f"○ {node}: Version not found (already deleted)")
+        else:
+            print(f"✗ {node}: {message}")
+```
+
+### Interactive Version Cleanup
+
+```python
+import requests
+
+project = "myproject"
+
+# Get all versions
+response = requests.get(f"http://localhost:6800/listversions.json?project={project}")
+versions = response.json()['versions']
+
+print(f"Project: {project}")
+print(f"Total versions: {len(versions)}\n")
+
+for i, version in enumerate(versions, 1):
+    print(f"{i}. {version}")
+
+print("\nEnter version numbers to delete (comma-separated), or 'all' to delete all:")
+selection = input("> ").strip()
+
+if selection.lower() == 'all':
+    to_delete = versions
+elif selection:
+    indices = [int(x.strip()) - 1 for x in selection.split(',')]
+    to_delete = [versions[i] for i in indices if 0 <= i < len(versions)]
+else:
+    to_delete = []
+
+if to_delete:
+    confirm = input(f"Delete {len(to_delete)} version(s)? (yes/no): ")
+    if confirm.lower() == 'yes':
+        for version in to_delete:
+            delete_response = requests.post(
+                "http://localhost:6800/delversion.json",
+                data={"project": project, "version": version}
+            )
+            
+            if delete_response.json()['status'] == 'ok':
+                print(f"✓ Deleted {version}")
+            else:
+                print(f"✗ Failed to delete {version}: {delete_response.json()['message']}")
+else:
+    print("No versions selected")
+```
+
+## Notes
+
+<Info>
+  If you delete the last remaining version of a project, the project itself is also deleted. You can recreate it by uploading a new version with [addversion.json](/api/add-version).
+</Info>
+
+<Warning>
+  This operation is permanent. Make sure you have backups of your egg files if you might need to redeploy the version later.
+</Warning>
+
+<Tip>
+  To delete all versions of a project at once, use [delproject.json](/api/delete-project) instead.
+</Tip>
+
+## Related Endpoints
+
+- [deleteproject.json](/api/delete-project) - Delete all versions at once
+- [listversions.json](/api/list-versions) - List versions before deleting
+- [addversion.json](/api/add-version) - Upload a new version
+- [listprojects.json](/api/list-projects) - Check if project still exists

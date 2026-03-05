@@ -1,0 +1,214 @@
+---
+title: 'listprojects.json'
+description: 'List all projects'
+---
+
+## Overview
+
+Get a list of all projects currently available in the Scrapyd instance.
+
+## HTTP Method
+
+```
+GET /listprojects.json
+```
+
+## Parameters
+
+This endpoint accepts no parameters.
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+<ResponseField name="projects" type="array" required>
+  Array of project names (strings)
+</ResponseField>
+
+## Examples
+
+### List All Projects
+
+```bash
+curl http://localhost:6800/listprojects.json
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "projects": ["myproject", "otherproject"]
+}
+```
+
+**Response (no projects):**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "projects": []
+}
+```
+
+### With Authentication
+
+If basic authentication is enabled:
+
+```bash
+curl -u username:password http://localhost:6800/listprojects.json
+```
+
+## Use Cases
+
+### List Projects in Terminal
+
+```bash
+curl -s http://localhost:6800/listprojects.json | \
+  python -c "import sys, json; print('\n'.join(json.load(sys.stdin)['projects']))"
+```
+
+Output:
+```
+myproject
+otherproject
+```
+
+### Check if Project Exists
+
+```python
+import requests
+
+def project_exists(project_name):
+    response = requests.get("http://localhost:6800/listprojects.json")
+    data = response.json()
+    return project_name in data['projects']
+
+if project_exists("myproject"):
+    print("Project exists")
+else:
+    print("Project not found")
+```
+
+### Iterate Over All Projects
+
+```python
+import requests
+
+response = requests.get("http://localhost:6800/listprojects.json")
+projects = response.json()['projects']
+
+for project in projects:
+    # Get versions for each project
+    versions_response = requests.get(
+        f"http://localhost:6800/listversions.json?project={project}"
+    )
+    versions = versions_response.json()['versions']
+    
+    print(f"{project}: {len(versions)} versions")
+    print(f"  Latest: {versions[-1] if versions else 'none'}")
+```
+
+### Count Projects
+
+```bash
+curl -s http://localhost:6800/listprojects.json | \
+  python -c "import sys, json; print(len(json.load(sys.stdin)['projects']))"
+```
+
+### Generate Project Report
+
+```python
+import requests
+import json
+
+def generate_report():
+    # Get all projects
+    projects_response = requests.get("http://localhost:6800/listprojects.json")
+    projects = projects_response.json()['projects']
+    
+    report = {}
+    
+    for project in projects:
+        # Get versions
+        versions_response = requests.get(
+            f"http://localhost:6800/listversions.json?project={project}"
+        )
+        versions = versions_response.json()['versions']
+        
+        # Get spiders from latest version
+        if versions:
+            spiders_response = requests.get(
+                f"http://localhost:6800/listspiders.json?project={project}"
+            )
+            spiders = spiders_response.json()['spiders']
+        else:
+            spiders = []
+        
+        # Get jobs
+        jobs_response = requests.get(
+            f"http://localhost:6800/listjobs.json?project={project}"
+        )
+        jobs_data = jobs_response.json()
+        
+        report[project] = {
+            "versions": len(versions),
+            "latest_version": versions[-1] if versions else None,
+            "spiders": len(spiders),
+            "pending_jobs": len(jobs_data['pending']),
+            "running_jobs": len(jobs_data['running']),
+            "finished_jobs": len(jobs_data['finished'])
+        }
+    
+    print(json.dumps(report, indent=2))
+
+generate_report()
+```
+
+Output:
+```json
+{
+  "myproject": {
+    "versions": 3,
+    "latest_version": "r23",
+    "spiders": 5,
+    "pending_jobs": 2,
+    "running_jobs": 1,
+    "finished_jobs": 10
+  },
+  "otherproject": {
+    "versions": 1,
+    "latest_version": "1.0",
+    "spiders": 2,
+    "pending_jobs": 0,
+    "running_jobs": 0,
+    "finished_jobs": 5
+  }
+}
+```
+
+## Notes
+
+<Info>
+  Projects are created automatically when you upload a version using [addversion.json](/api/add-version).
+</Info>
+
+<Tip>
+  The projects list includes all projects that have at least one version in egg storage.
+</Tip>
+
+## Related Endpoints
+
+- [listversions.json](/api/list-versions) - List versions of a project
+- [listspiders.json](/api/list-spiders) - List spiders in a project
+- [listjobs.json](/api/list-jobs) - List jobs for a project
+- [addversion.json](/api/add-version) - Add a new project or version
+- [deleteproject.json](/api/delete-project) - Delete a project

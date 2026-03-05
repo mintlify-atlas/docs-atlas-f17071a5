@@ -1,0 +1,263 @@
+---
+title: 'listjobs.json'
+description: 'List pending, running, and finished jobs'
+---
+
+## Overview
+
+Get detailed information about all pending, running, and finished jobs for a project or across all projects.
+
+## HTTP Method
+
+```
+GET /listjobs.json
+```
+
+## Parameters
+
+<ParamField query="project" type="string">
+  Filter results by project name (optional)
+  
+  If omitted, returns jobs from all projects.
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success, `"error"` on failure
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+<ResponseField name="pending" type="array" required>
+  Array of pending jobs (in spider queues)
+  
+  Each pending job contains:
+  - `id` (string) - Job ID
+  - `project` (string) - Project name (added in 1.3.0)
+  - `spider` (string) - Spider name
+  - `version` (string | null) - Project version (added in 1.5.0)
+  - `settings` (object) - Scrapy settings (added in 1.5.0)
+  - `args` (object) - Spider arguments (added in 1.5.0)
+</ResponseField>
+
+<ResponseField name="running" type="array" required>
+  Array of running jobs (active Scrapy processes)
+  
+  Each running job contains:
+  - `id` (string) - Job ID
+  - `project` (string) - Project name (added in 1.3.0)
+  - `spider` (string) - Spider name
+  - `pid` (integer) - Process ID (added in 1.2.0)
+  - `start_time` (string) - Job start timestamp (added in 1.1.0)
+  - `log_url` (string | null) - URL to log file (added in 1.4.0)
+  - `items_url` (string | null) - URL to items file (added in 1.4.0)
+</ResponseField>
+
+<ResponseField name="finished" type="array" required>
+  Array of finished jobs (in job storage)
+  
+  Each finished job contains:
+  - `id` (string) - Job ID
+  - `project` (string) - Project name (added in 1.3.0)
+  - `spider` (string) - Spider name
+  - `start_time` (string) - Job start timestamp
+  - `end_time` (string) - Job end timestamp
+  - `log_url` (string | null) - URL to log file (added in 1.4.0)
+  - `items_url` (string | null) - URL to items file (added in 1.4.0)
+</ResponseField>
+
+## Examples
+
+### List All Jobs
+
+Get jobs from all projects:
+
+```bash
+curl http://localhost:6800/listjobs.json | python -m json.tool
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "pending": [
+    {
+      "id": "78391cc0fcaf11e1b0090800272a6d06",
+      "project": "myproject",
+      "spider": "spider1",
+      "version": "0.1",
+      "settings": {"DOWNLOAD_DELAY": "2"},
+      "args": {"arg1": "val1"}
+    }
+  ],
+  "running": [
+    {
+      "id": "422e608f9f28cef127b3d5ef93fe9399",
+      "project": "myproject",
+      "spider": "spider2",
+      "pid": 93956,
+      "start_time": "2026-03-05 10:14:03.594664",
+      "log_url": "/logs/myproject/spider2/422e608f9f28cef127b3d5ef93fe9399.log",
+      "items_url": "/items/myproject/spider2/422e608f9f28cef127b3d5ef93fe9399.jl"
+    }
+  ],
+  "finished": [
+    {
+      "id": "2f16646cfcaf11e1b0090800272a6d06",
+      "project": "myproject",
+      "spider": "spider3",
+      "start_time": "2026-03-05 09:14:03.594664",
+      "end_time": "2026-03-05 09:24:03.594664",
+      "log_url": "/logs/myproject/spider3/2f16646cfcaf11e1b0090800272a6d06.log",
+      "items_url": "/items/myproject/spider3/2f16646cfcaf11e1b0090800272a6d06.jl"
+    }
+  ]
+}
+```
+
+### List Jobs for Specific Project
+
+```bash
+curl http://localhost:6800/listjobs.json?project=myproject
+```
+
+### With Authentication
+
+```bash
+curl -u username:password http://localhost:6800/listjobs.json?project=myproject
+```
+
+## Error Cases
+
+### Project Not Found
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "project 'myproject' not found"
+}
+```
+
+## Notes
+
+<Warning>
+  The default job storage is in-memory. Finished jobs are lost when Scrapyd restarts. Configure a persistent job storage to retain history.
+</Warning>
+
+<Info>
+  `log_url` and `items_url` are `null` if:
+  - The `logs_dir` or `items_dir` settings are disabled, or
+  - The files don't exist (e.g., spider didn't produce items)
+</Info>
+
+<Tip>
+  The `project` field in each job object (added in version 1.3.0) makes it easy to filter jobs when querying all projects.
+</Tip>
+
+## Use Cases
+
+### Monitor Running Jobs
+
+```python
+import requests
+
+response = requests.get("http://localhost:6800/listjobs.json?project=myproject")
+data = response.json()
+
+print(f"Running jobs: {len(data['running'])}")
+for job in data['running']:
+    print(f"  {job['spider']} (PID {job['pid']}) - Started {job['start_time']}")
+```
+
+### Download Logs for Finished Jobs
+
+```python
+import requests
+
+response = requests.get("http://localhost:6800/listjobs.json?project=myproject")
+data = response.json()
+
+for job in data['finished']:
+    if job['log_url']:
+        log_url = f"http://localhost:6800{job['log_url']}"
+        log_response = requests.get(log_url)
+        
+        filename = f"{job['spider']}_{job['id']}.log"
+        with open(filename, 'w') as f:
+            f.write(log_response.text)
+        
+        print(f"Downloaded: {filename}")
+```
+
+### Check Queue Depth
+
+```python
+import requests
+
+response = requests.get("http://localhost:6800/listjobs.json?project=myproject")
+data = response.json()
+
+queue_depth = len(data['pending'])
+if queue_depth > 100:
+    print(f"Warning: Queue depth is {queue_depth}")
+```
+
+### Find Long-Running Jobs
+
+```python
+import requests
+from datetime import datetime, timedelta
+
+response = requests.get("http://localhost:6800/listjobs.json")
+data = response.json()
+
+now = datetime.now()
+for job in data['running']:
+    start_time = datetime.fromisoformat(job['start_time'])
+    duration = now - start_time
+    
+    if duration > timedelta(hours=1):
+        print(f"Long-running job: {job['project']}/{job['spider']} "
+              f"({duration} hours, PID {job['pid']})")
+```
+
+### Export Job History
+
+```python
+import requests
+import csv
+
+response = requests.get("http://localhost:6800/listjobs.json")
+data = response.json()
+
+with open('job_history.csv', 'w', newline='') as f:
+    writer = csv.writer(f)
+    writer.writerow(['Job ID', 'Project', 'Spider', 'Start Time', 'End Time', 'Duration'])
+    
+    for job in data['finished']:
+        start = datetime.fromisoformat(job['start_time'])
+        end = datetime.fromisoformat(job['end_time'])
+        duration = end - start
+        
+        writer.writerow([
+            job['id'],
+            job['project'],
+            job['spider'],
+            job['start_time'],
+            job['end_time'],
+            str(duration)
+        ])
+```
+
+## Related Endpoints
+
+- [daemonstatus.json](/api/daemon-status) - Get aggregate job counts
+- [status.json](/api/status) - Check status of a specific job
+- [schedule.json](/api/schedule) - Schedule a new job
+- [cancel.json](/api/cancel) - Cancel a job

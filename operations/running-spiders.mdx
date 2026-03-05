@@ -1,0 +1,316 @@
+---
+title: Running Spiders
+description: Schedule and run spiders using the schedule.json API with custom arguments, settings, and priorities
+---
+
+## Overview
+
+Scrapyd schedules spiders as jobs using the `schedule.json` API endpoint. Each scheduled spider runs as a separate Scrapy crawl process.
+
+## Scheduling Spiders
+
+### Basic Usage
+
+Schedule a spider with the minimum required parameters:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider
+```
+
+### Response
+
+```json
+{
+  "node_name": "mynodename",
+  "status": "ok",
+  "jobid": "6487ec79947edab326d6db28a2d86511e8247444"
+}
+```
+
+The `jobid` is a unique identifier for this job. Save it to check status or cancel the job later.
+
+## API Parameters
+
+The `schedule.json` endpoint accepts these parameters:
+
+<ParamField path="project" type="string" required>
+  The project name. Must match a deployed project.
+</ParamField>
+
+<ParamField path="spider" type="string" required>
+  The spider name. Must exist in the project.
+</ParamField>
+
+<ParamField path="_version" type="string">
+  The project version to use. If not specified, Scrapyd uses the latest version.
+</ParamField>
+
+<ParamField path="jobid" type="string">
+  A custom job ID. If not provided, Scrapyd generates a hexadecimal UUID v1.
+</ParamField>
+
+<ParamField path="priority" type="float" default="0">
+  Job priority in the project's spider queue. Higher numbers have higher priority.
+</ParamField>
+
+<ParamField path="setting" type="string">
+  A Scrapy setting to override. Can be specified multiple times.
+</ParamField>
+
+<ParamField path="*" type="string">
+  Any other parameter is passed as a spider argument.
+</ParamField>
+
+## Specifying Project Versions
+
+Schedule a spider with a specific version:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d _version=r23
+```
+
+<Note>
+  The underscore prefix in `_version` indicates this is a Scrapyd-specific parameter, not a spider argument.
+</Note>
+
+If the specified version doesn't exist, you'll get an error:
+
+```json
+{
+  "status": "error",
+  "message": "version 'r99' not found"
+}
+```
+
+## Custom Job IDs
+
+By default, Scrapyd generates a UUID v1 job ID. You can provide your own:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d jobid=my-custom-job-id-123
+```
+
+Custom job IDs are useful for:
+- Integration with external systems
+- Creating human-readable job identifiers
+- Preventing duplicate jobs (Scrapyd allows duplicate job IDs)
+
+<Warning>
+  Scrapyd does not prevent duplicate job IDs. If you schedule two jobs with the same ID, both will run, which may cause issues when accessing logs or canceling jobs.
+</Warning>
+
+## Job Priority
+
+Control the order in which pending jobs run using priority:
+
+```bash
+# Low priority job
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=spider1 \
+  -d priority=0
+
+# High priority job (runs first)
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=spider2 \
+  -d priority=10
+```
+
+Jobs with higher priority values run before jobs with lower priority values. Default priority is `0`.
+
+## Passing Spider Arguments
+
+Any parameter that isn't a reserved Scrapyd parameter becomes a spider argument:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d url=http://example.com \
+  -d category=electronics \
+  -d max_pages=100
+```
+
+These arguments are passed to your spider's `__init__` method as keyword arguments:
+
+```python
+class MySpider(scrapy.Spider):
+    name = 'somespider'
+    
+    def __init__(self, url=None, category=None, max_pages=10, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.start_urls = [url] if url else []
+        self.category = category
+        self.max_pages = int(max_pages)
+```
+
+<Warning>
+  Your spider's `__init__` method must accept `**kwargs` because Scrapyd passes internal arguments like `_job` to the spider. From `source/scrapyd/webservice.py:78`:
+  
+  > Like Scrapy's `scrapy.Spider` class, spiders should allow an arbitrary number of keyword arguments in their `__init__` method.
+</Warning>
+
+### Multiple Values
+
+<Info>
+  When a parameter is specified multiple times, only the first value is sent to the spider. This is a known limitation. See `source/docs/api.rst:110-114`.
+</Info>
+
+## Overriding Scrapy Settings
+
+Override Scrapy settings for individual jobs:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d setting=DOWNLOAD_DELAY=2 \
+  -d setting=CONCURRENT_REQUESTS=8 \
+  -d setting=LOG_LEVEL=DEBUG
+```
+
+Settings are passed as `-s KEY=VALUE` arguments to the `scrapy crawl` command. See `source/scrapyd/launcher.py:26`:
+
+```python
+*chain.from_iterable(['-s', f"{key}={value}"] for key, value in copied.pop('settings', {}).items()),
+```
+
+## Complete Example
+
+A comprehensive example using all features:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=ecommerce \
+  -d spider=product_spider \
+  -d _version=1.2.0 \
+  -d jobid=ecom-prod-20240305-001 \
+  -d priority=5 \
+  -d setting=DOWNLOAD_DELAY=1.5 \
+  -d setting=CONCURRENT_REQUESTS=16 \
+  -d start_url=https://example.com/category/electronics \
+  -d max_depth=3 \
+  -d output_format=json
+```
+
+## Log Files
+
+If the `logs_dir` setting is configured (default: `logs`), Scrapyd writes log files to:
+
+```
+{logs_dir}/{project}/{spider}/{jobid}.log
+```
+
+For example:
+
+```
+logs/myproject/somespider/6487ec79947edab326d6db28a2d86511e8247444.log
+```
+
+Custom job IDs affect the log filename:
+
+```bash
+# Creates logs/myproject/somespider/my-job-123.log
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d jobid=my-job-123
+```
+
+## How Scheduling Works
+
+<Steps>
+  <Step title="Validation">
+    Scrapyd validates that the project exists, the version exists (if specified), and the spider exists in that version.
+  </Step>
+
+  <Step title="Queue insertion">
+    The job is added to the project's spider queue with the specified priority.
+  </Step>
+
+  <Step title="Process spawning">
+    When a process slot becomes available, the poller picks the highest-priority job from the queue and spawns a Scrapy process.
+  </Step>
+
+  <Step title="Execution">
+    The spider runs as: `python -m scrapyd.runner crawl {spider} -s {settings} -a {args}`
+  </Step>
+</Steps>
+
+See `source/scrapyd/launcher.py:64` for the exact command construction.
+
+## Error Handling
+
+### Project Not Found
+
+```json
+{
+  "status": "error",
+  "message": "project 'nonexistent' not found"
+}
+```
+
+Ensure you've deployed the project using `addversion.json` or placed an egg in the `eggs_dir`.
+
+### Spider Not Found
+
+```json
+{
+  "status": "error",
+  "message": "spider 'nonexistent' not found"
+}
+```
+
+Verify the spider name matches exactly (case-sensitive). List available spiders:
+
+```bash
+curl http://localhost:6800/listspiders.json?project=myproject
+```
+
+### Version Not Found
+
+```json
+{
+  "status": "error",
+  "message": "version 'r99' not found"
+}
+```
+
+Check deployed versions:
+
+```bash
+curl http://localhost:6800/listversions.json?project=myproject
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use meaningful job IDs for important jobs">
+    For production jobs or jobs you need to track, use descriptive job IDs like `prod-daily-crawl-20240305`.
+  </Accordion>
+
+  <Accordion title="Set appropriate priorities">
+    Use priorities to ensure critical jobs run first. For example, give real-time scraping jobs higher priority than batch jobs.
+  </Accordion>
+
+  <Accordion title="Override settings sparingly">
+    Most settings should be in your project's `settings.py`. Use runtime settings only for job-specific overrides.
+  </Accordion>
+
+  <Accordion title="Accept **kwargs in spider __init__">
+    Always include `**kwargs` in your spider's `__init__` to handle Scrapyd's internal arguments.
+  </Accordion>
+
+  <Accordion title="Validate arguments in your spider">
+    Don't rely on argument validation at the Scrapyd level. Validate required arguments in your spider code.
+  </Accordion>
+</AccordionGroup>

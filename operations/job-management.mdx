@@ -1,0 +1,503 @@
+---
+title: Job Management
+description: Manage Scrapyd jobs including canceling, checking status, and cleaning up finished jobs
+---
+
+## Overview
+
+Scrapyd provides APIs to manage the lifecycle of scraping jobs:
+- Cancel pending or running jobs
+- Check job status
+- View finished job history
+- Clean up old job data
+
+## Canceling Jobs
+
+### Using cancel.json
+
+Cancel a job before it completes:
+
+```bash
+curl http://localhost:6800/cancel.json \
+  -d project=myproject \
+  -d job=6487ec79947edab326d6db28a2d86511e8247444
+```
+
+### Response
+
+```json
+{
+  "node_name": "mynodename",
+  "status": "ok",
+  "prevstate": "running"
+}
+```
+
+The `prevstate` field indicates what state the job was in before cancellation:
+
+<ResponseField name="prevstate" type="string">
+  - `"pending"`: Job was removed from the queue
+  - `"running"`: Job process was signaled to terminate
+  - `null`: Job was not found
+</ResponseField>
+
+### How Cancellation Works
+
+From `source/scrapyd/webservice.py:244-268`:
+
+<Steps>
+  <Step title="Check pending queue">
+    Scrapyd first checks if the job is pending. If found, it's removed from the spider queue.
+  </Step>
+
+  <Step title="Check running processes">
+    If not pending, Scrapyd looks for a running process matching the project and job ID.
+  </Step>
+
+  <Step title="Send signal">
+    If running, the process is sent a signal to terminate (INT on Unix-like systems, BREAK on Windows).
+  </Step>
+</Steps>
+
+### Custom Termination Signals
+
+You can specify which signal to send to running jobs:
+
+<ParamField path="signal" type="string" default="INT (Unix) or 21/BREAK (Windows)">
+  The signal to send. Can be:
+  - An integer (e.g., `9` for SIGKILL)
+  - `HUP`, `INT`, `KILL`, `STOP`, or `TERM`
+</ParamField>
+
+#### Examples
+
+Graceful shutdown (default):
+
+```bash
+curl http://localhost:6800/cancel.json \
+  -d project=myproject \
+  -d job=abc123
+```
+
+Force kill:
+
+```bash
+curl http://localhost:6800/cancel.json \
+  -d project=myproject \
+  -d job=abc123 \
+  -d signal=KILL
+```
+
+Custom signal:
+
+```bash
+curl http://localhost:6800/cancel.json \
+  -d project=myproject \
+  -d job=abc123 \
+  -d signal=TERM
+```
+
+<Warning>
+  Using `KILL` (signal 9) force-terminates the process without cleanup. The spider cannot save its state or perform cleanup operations. Use `INT` or `TERM` for graceful shutdown.
+</Warning>
+
+### Platform Differences
+
+From `source/scrapyd/webservice.py:236-243`:
+
+- **Unix/Linux/macOS**: Default signal is `INT` (SIGINT)
+- **Windows**: Default signal is `21` (SIGBREAK)
+- **Cygwin**: Uses `INT` like Unix systems
+
+## Checking Job Status
+
+### Using status.json
+
+Check if a specific job exists and its current state:
+
+```bash
+curl http://localhost:6800/status.json?job=6487ec79947edab326d6db28a2d86511e8247444
+```
+
+### Response
+
+```json
+{
+  "node_name": "mynodename",
+  "status": "ok",
+  "currstate": "running"
+}
+```
+
+<ResponseField name="currstate" type="string | null">
+  The current state of the job:
+  - `"pending"`: Waiting in queue
+  - `"running"`: Currently executing
+  - `"finished"`: Completed
+  - `null`: Job not found
+</ResponseField>
+
+### Filtering by Project
+
+Optionally specify a project to search only that project's jobs:
+
+```bash
+curl "http://localhost:6800/status.json?job=abc123&project=myproject"
+```
+
+This is faster when you have many projects, as it limits the search scope.
+
+### Status Search Order
+
+From `source/scrapyd/webservice.py:329-347`, Scrapyd searches in this order:
+
+1. **Finished jobs**: Checks job storage
+2. **Running jobs**: Checks active processes
+3. **Pending jobs**: Checks spider queues
+
+The search stops at the first match.
+
+## Viewing Finished Jobs
+
+### Using listjobs.json
+
+Retrieve all jobs (pending, running, and finished):
+
+```bash
+curl http://localhost:6800/listjobs.json?project=myproject
+```
+
+See [Monitoring](/operations/monitoring#listjobsjson) for full response format.
+
+### Finished Job Storage
+
+Finished jobs are stored based on your `jobstorage` configuration.
+
+#### Memory Storage (Default)
+
+From `source/scrapyd/default_scrapyd.conf:35`:
+
+```ini
+[scrapyd]
+jobstorage = scrapyd.jobstorage.MemoryJobStorage
+finished_to_keep = 100
+```
+
+**Characteristics**:
+- Jobs stored in memory only
+- Lost when Scrapyd restarts
+- Keeps only the last 100 jobs (configurable)
+- Lowest overhead
+
+#### SQLite Storage
+
+For persistent storage:
+
+```ini
+[scrapyd]
+jobstorage = scrapyd.jobstorage.SqliteJobStorage
+finished_to_keep = 1000
+dbs_dir = dbs
+```
+
+**Characteristics**:
+- Jobs persisted to SQLite database
+- Survives Scrapyd restarts
+- Can store more jobs (e.g., 1000+)
+- Slight performance overhead
+
+From `source/scrapyd/jobstorage.py:34-42`, SQLite storage automatically cleans old jobs:
+
+```python
+def add(self, job):
+    self.jobs.add(job)
+    self.jobs.clear(self.finished_to_keep)
+```
+
+### What's Stored
+
+From `source/scrapyd/launcher.py:77-81`, each finished job stores:
+
+- `project`: Project name
+- `spider`: Spider name
+- `job`: Job ID
+- `start_time`: When the job started
+- `end_time`: When the job finished
+
+<Note>
+  Log files and item files are **not** automatically deleted when jobs are removed from storage. You must clean these up separately.
+</Note>
+
+## Cleaning Up Old Jobs
+
+### Automatic Cleanup
+
+Scrapyd automatically limits stored finished jobs based on `finished_to_keep`:
+
+```ini
+[scrapyd]
+finished_to_keep = 100  # Keep last 100 finished jobs
+```
+
+From `source/scrapyd/jobstorage.py:21`:
+
+```python
+del self.jobs[: -self.finished_to_keep]  # keep last x finished jobs
+```
+
+When the limit is exceeded, the oldest jobs are removed.
+
+### Manual Cleanup
+
+Scrapyd doesn't provide an API endpoint to delete individual finished jobs. Cleanup depends on your storage:
+
+#### Memory Storage
+
+Restart Scrapyd to clear all finished jobs:
+
+```bash
+sudo systemctl restart scrapyd
+# or
+kill <scrapyd-pid>
+scrapyd
+```
+
+#### SQLite Storage
+
+Query or delete from the database directly:
+
+```bash
+sqlite3 dbs/finished_jobs.db
+```
+
+```sql
+-- View finished jobs
+SELECT * FROM jobs ORDER BY end_time DESC LIMIT 10;
+
+-- Delete jobs older than 30 days
+DELETE FROM jobs WHERE end_time < datetime('now', '-30 days');
+
+-- Vacuum to reclaim space
+VACUUM;
+```
+
+### Cleaning Log Files
+
+Log files accumulate in the `logs_dir` directory. Clean them periodically:
+
+```bash
+# Delete logs older than 30 days
+find logs/ -name "*.log" -mtime +30 -delete
+
+# Archive logs older than 7 days
+find logs/ -name "*.log" -mtime +7 -exec gzip {} \;
+```
+
+### Cleaning Item Files
+
+Similarly, clean up old item files:
+
+```bash
+# Delete items older than 30 days
+find items/ -name "*.jl" -mtime +30 -delete
+
+# Archive to external storage
+find items/ -name "*.jl" -mtime +7 -exec aws s3 cp {} s3://my-bucket/items/ \;
+find items/ -name "*.jl" -mtime +7 -delete
+```
+
+### Automated Cleanup Script
+
+Create a cron job for regular cleanup:
+
+```bash
+#!/bin/bash
+# cleanup-scrapyd.sh
+
+# Keep logs for 30 days
+find /var/lib/scrapyd/logs -name "*.log" -mtime +30 -delete
+
+# Keep items for 14 days
+find /var/lib/scrapyd/items -name "*.jl" -mtime +14 -delete
+
+# Clean SQLite database (keep 500 most recent)
+sqlite3 /var/lib/scrapyd/dbs/finished_jobs.db \
+  "DELETE FROM jobs WHERE rowid NOT IN (SELECT rowid FROM jobs ORDER BY end_time DESC LIMIT 500)"
+
+sqlite3 /var/lib/scrapyd/dbs/finished_jobs.db "VACUUM"
+
+echo "Cleanup completed at $(date)"
+```
+
+Schedule with cron:
+
+```bash
+# Run daily at 2 AM
+0 2 * * * /usr/local/bin/cleanup-scrapyd.sh >> /var/log/scrapyd-cleanup.log 2>&1
+```
+
+## Process Management
+
+### Maximum Concurrent Processes
+
+From `source/scrapyd/default_scrapyd.conf:17-18`:
+
+```ini
+[scrapyd]
+max_proc = 0  # 0 means auto-calculate
+max_proc_per_cpu = 4
+```
+
+When `max_proc = 0`, Scrapyd calculates:
+
+```python
+max_proc = cpu_count * max_proc_per_cpu
+```
+
+From `source/scrapyd/launcher.py:85-94`:
+
+```python
+def _get_max_proc(self, config):
+    max_proc = config.getint('max_proc', 0)
+    if max_proc:
+        return max_proc
+    
+    try:
+        cpus = multiprocessing.cpu_count()
+    except NotImplementedError:
+        cpus = 1
+    return cpus * config.getint('max_proc_per_cpu', 4)
+```
+
+### Process Slots
+
+Scrapyd manages jobs using process slots:
+
+- Each slot can run one job at a time
+- When a job finishes, the slot becomes available
+- The poller assigns the next highest-priority pending job to the free slot
+
+From `source/scrapyd/launcher.py:49-83`:
+
+```python
+for slot in range(self.max_proc):
+    self._get_message(slot)  # Start listening for jobs
+```
+
+### Checking Process Status
+
+List running processes:
+
+```bash
+curl http://localhost:6800/daemonstatus.json
+```
+
+```json
+{
+  "node_name": "mynodename",
+  "status": "ok",
+  "pending": 5,
+  "running": 4,
+  "finished": 100
+}
+```
+
+If `running` consistently equals your `max_proc`, consider:
+- Increasing `max_proc` or `max_proc_per_cpu`
+- Adding more Scrapyd instances
+- Optimizing spider performance
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use graceful cancellation">
+    Always try canceling with the default signal (INT) first. Only use KILL if the process is unresponsive:
+    
+    ```bash
+    # Try graceful first
+    curl http://localhost:6800/cancel.json -d project=p -d job=j
+    
+    # Wait 30 seconds, then force if still running
+    curl http://localhost:6800/cancel.json -d project=p -d job=j -d signal=KILL
+    ```
+  </Accordion>
+
+  <Accordion title="Monitor finished job count">
+    If `finished` in `daemonstatus.json` stays at `finished_to_keep`, you're at capacity. Consider:
+    - Using SqliteJobStorage for persistence
+    - Increasing `finished_to_keep`
+    - Implementing external job tracking
+  </Accordion>
+
+  <Accordion title="Implement external job tracking">
+    For production systems, store job metadata in an external database. Poll `status.json` periodically and save results.
+  </Accordion>
+
+  <Accordion title="Set up automated cleanup">
+    Don't let log and item files accumulate indefinitely. Schedule regular cleanup based on your retention requirements.
+  </Accordion>
+
+  <Accordion title="Handle job not found gracefully">
+    When checking status or canceling, handle `currstate: null` or `prevstate: null` appropriately. The job may have already finished and been cleaned up.
+  </Accordion>
+
+  <Accordion title="Use SqliteJobStorage in production">
+    Memory storage is convenient for development, but use SqliteJobStorage in production for job history that persists across restarts.
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Cancel returns prevstate: null">
+    The job doesn't exist or has already finished. Check:
+    
+    ```bash
+    curl "http://localhost:6800/status.json?job=<jobid>&project=<project>"
+    ```
+  </Accordion>
+
+  <Accordion title="Job won't cancel">
+    The process may be unresponsive. Try escalating signals:
+    
+    ```bash
+    # Try TERM
+    curl http://localhost:6800/cancel.json -d project=p -d job=j -d signal=TERM
+    
+    # Last resort: KILL
+    curl http://localhost:6800/cancel.json -d project=p -d job=j -d signal=KILL
+    ```
+    
+    You can also kill the process directly using the PID from `listjobs.json`:
+    
+    ```bash
+    kill -9 <pid>
+    ```
+  </Accordion>
+
+  <Accordion title="Finished jobs disappearing">
+    You're exceeding `finished_to_keep`. Either:
+    - Increase the limit
+    - Use SqliteJobStorage
+    - Implement external job tracking before they're cleaned up
+  </Accordion>
+
+  <Accordion title="Database growing too large">
+    For SqliteJobStorage, run VACUUM periodically:
+    
+    ```bash
+    sqlite3 dbs/finished_jobs.db "VACUUM"
+    ```
+    
+    Or reduce `finished_to_keep` to store fewer jobs.
+  </Accordion>
+
+  <Accordion title="All process slots full">
+    Check `daemonstatus.json`. If `running` equals `max_proc`, you're at capacity:
+    
+    1. Increase `max_proc_per_cpu` or set explicit `max_proc`
+    2. Optimize spider performance to finish jobs faster
+    3. Deploy additional Scrapyd instances
+    4. Cancel low-priority jobs to free slots
+  </Accordion>
+</AccordionGroup>

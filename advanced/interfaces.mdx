@@ -1,0 +1,495 @@
+---
+title: Zope Interfaces
+description: Understanding and implementing Scrapyd's component interfaces
+---
+
+Scrapyd uses [Zope interfaces](https://zopeinterface.readthedocs.io/) to define contracts between components. This allows you to customize Scrapyd's behavior by implementing alternative components.
+
+All interfaces are defined in `scrapyd/interfaces.py`.
+
+## IEggStorage
+
+Stores project eggs (Python packages). Defined in `scrapyd/interfaces.py:4`:
+
+```python
+class IEggStorage(Interface):
+    """
+    A component to store project eggs.
+    """
+
+    def put(eggfile, project, version):
+        """
+        Store the egg (a file object), which represents a ``version`` of the ``project``.
+        """
+
+    def get(project, version=None):
+        """
+        Return ``(version, file)`` for the egg matching the ``project`` and ``version``.
+
+        If ``version`` is ``None``, the latest version and corresponding file are returned.
+
+        If no egg is found, ``(None, None)`` is returned.
+
+        .. tip:: Remember to close the ``file`` when done.
+        """
+
+    def list(project):
+        """
+        Return all versions of the ``project`` in order, with the latest version last.
+        """
+
+    def list_projects():
+        """
+        Return all projects in storage.
+        """
+
+    def delete(project, version=None):
+        """
+        Delete the egg matching the ``project`` and ``version``. Delete the ``project``, if no versions remains.
+        """
+```
+
+### Methods
+
+<ParamField path="put" type="method">
+  Store an egg file for a project version.
+  
+  **Parameters:**
+  - `eggfile` - File object containing the egg
+  - `project` - Project name
+  - `version` - Version string
+</ParamField>
+
+<ParamField path="get" type="method">
+  Retrieve an egg file.
+  
+  **Parameters:**
+  - `project` - Project name
+  - `version` - Version string (optional, returns latest if None)
+  
+  **Returns:** Tuple of `(version, file)` or `(None, None)` if not found
+</ParamField>
+
+<ParamField path="list" type="method">
+  List all versions for a project, ordered with latest last.
+  
+  **Returns:** List of version strings
+</ParamField>
+
+<ParamField path="list_projects" type="method">
+  List all projects in storage.
+  
+  **Returns:** List of project names
+</ParamField>
+
+<ParamField path="delete" type="method">
+  Delete an egg or entire project.
+  
+  **Parameters:**
+  - `project` - Project name
+  - `version` - Version string (optional, deletes entire project if None)
+</ParamField>
+
+## IPoller
+
+Tracks capacity for new jobs and starts them when ready. Defined in `scrapyd/interfaces.py:44`:
+
+```python
+class IPoller(Interface):
+    """
+    A component that tracks capacity for new jobs, and starts jobs when ready.
+    """
+
+    queues = Attribute(
+        """
+        An object (like a ``dict``) with a ``__getitem__`` method that accepts a project's name and returns its
+        spider queue of pending jobs.
+        """
+    )
+
+    def poll():
+        """
+        Called periodically to start jobs if there's capacity.
+        """
+
+    def next():
+        """
+        Return the next pending job.
+
+        It should return a Deferred that will be fired when there's capacity, or already fired if there's capacity.
+
+        The pending job is a ``dict`` containing at least the ``_project`` name, ``_spider`` name and ``_job`` ID.
+        """
+
+    def update_projects():
+        """
+        Called when projects may have changed, to refresh the available projects.
+        """
+```
+
+### Attributes
+
+<ParamField path="queues" type="dict-like">
+  Object that returns an `ISpiderQueue` for a given project name.
+</ParamField>
+
+### Methods
+
+<ParamField path="poll" type="method">
+  Called periodically by `TimerService` to start jobs when slots are available.
+</ParamField>
+
+<ParamField path="next" type="method">
+  Returns a Twisted `Deferred` that fires with the next pending job when capacity is available.
+  
+  **Returns:** Deferred that resolves to a dict with keys:
+  - `_project` - Project name
+  - `_spider` - Spider name
+  - `_job` - Unique job ID
+  - Additional keys for spider arguments
+</ParamField>
+
+<ParamField path="update_projects" type="method">
+  Refresh the list of available projects and their queues.
+</ParamField>
+
+## ISpiderQueue
+
+Stores pending jobs for a single project. Defined in `scrapyd/interfaces.py:81`:
+
+```python
+class ISpiderQueue(Interface):
+    """
+    A component to store pending jobs.
+    """
+
+    def add(name, priority, **spider_args):
+        """
+        Add a pending job, given the spider ``name``, crawl ``priority`` and keyword arguments.
+        """
+
+    def pop():
+        """
+        Pop the next pending job. The pending job is a ``dict`` containing the spider ``name``.
+        """
+
+    def list():
+        """
+        Return the pending jobs.
+        """
+
+    def count():
+        """
+        Return the number of pending jobs.
+        """
+
+    def remove(func):
+        """
+        Remove pending jobs for which ``func(job)`` is true, and return the number of removed pending jobs.
+        """
+
+    def clear():
+        """
+        Remove all pending jobs.
+        """
+```
+
+<Warning>
+  The dict keys used by your `ISpiderQueue` implementation must match your:
+  - Launcher service
+  - `IEnvironment` implementation
+  - Webservices that schedule, cancel, or list jobs
+</Warning>
+
+### Methods
+
+<ParamField path="add" type="method">
+  Add a pending job to the queue.
+  
+  **Parameters:**
+  - `name` - Spider name
+  - `priority` - Crawl priority (float)
+  - `**spider_args` - Additional arguments (may include `_job`, `_version`, `settings`)
+</ParamField>
+
+<ParamField path="pop" type="method">
+  Remove and return the highest priority pending job.
+  
+  **Returns:** Dict with at minimum a `name` key for the spider name
+</ParamField>
+
+<ParamField path="list" type="method">
+  Return all pending jobs without removing them.
+  
+  **Returns:** List of job dicts
+</ParamField>
+
+<ParamField path="count" type="method">
+  Return the number of pending jobs.
+  
+  **Returns:** Integer count
+</ParamField>
+
+<ParamField path="remove" type="method">
+  Remove jobs matching a predicate function.
+  
+  **Parameters:**
+  - `func` - Function that takes a job dict and returns True to remove
+  
+  **Returns:** Number of jobs removed
+</ParamField>
+
+<ParamField path="clear" type="method">
+  Remove all pending jobs from the queue.
+</ParamField>
+
+## ISpiderScheduler
+
+Schedules jobs by adding them to project queues. Defined in `scrapyd/interfaces.py:132`:
+
+```python
+class ISpiderScheduler(Interface):
+    """
+    A component to schedule jobs.
+    """
+
+    def schedule(project, spider_name, priority, **spider_args):
+        """
+        Schedule a crawl.
+        """
+
+    def list_projects():
+        """
+        Return all projects that can be scheduled.
+        """
+
+    def update_projects():
+        """
+        Called when projects may have changed, to refresh the available projects.
+        """
+```
+
+### Methods
+
+<ParamField path="schedule" type="method">
+  Schedule a spider to run.
+  
+  **Parameters:**
+  - `project` - Project name
+  - `spider_name` - Spider name
+  - `priority` - Crawl priority (float, default 0.0)
+  - `**spider_args` - Additional arguments passed to spider
+</ParamField>
+
+<ParamField path="list_projects" type="method">
+  Return all projects that can be scheduled.
+  
+  **Returns:** List of project names
+</ParamField>
+
+<ParamField path="update_projects" type="method">
+  Refresh the list of available projects.
+</ParamField>
+
+## IEnvironment
+
+Generates the environment for running jobs. Defined in `scrapyd/interfaces.py:156`:
+
+```python
+class IEnvironment(Interface):
+    """
+    A component to generate the environment of jobs.
+    """
+
+    def get_settings(message):
+        """
+        Return the Scrapy settings to use for running the process.
+
+        Depending on the chosen launcher, this would be one of more ``LOG_FILE`` or ``FEEDS``.
+
+        :param message: the pending job received from IPoller.next()
+        """
+
+    def get_environment(message, slot):
+        """
+        Return the environment variables to use for running the process.
+
+        Depending on the chosen launcher, this would be one of more of ``SCRAPY_PROJECT``,
+        ``SCRAPYD_EGG_VERSION`` or ``SCRAPY_SETTINGS_MODULE``.
+
+        :param message: the pending job received from IPoller.next()
+        :param slot: the launcher slot for tracking the process
+        """
+```
+
+<Warning>
+  Your `IEnvironment` implementation must match your launcher service.
+</Warning>
+
+### Methods
+
+<ParamField path="get_settings" type="method">
+  Return Scrapy settings for the job.
+  
+  **Parameters:**
+  - `message` - Job dict from `IPoller.next()`
+  
+  **Returns:** Dict of Scrapy settings (e.g., `LOG_FILE`, `FEEDS`, `JOBDIR`)
+</ParamField>
+
+<ParamField path="get_environment" type="method">
+  Return environment variables for the process.
+  
+  **Parameters:**
+  - `message` - Job dict from `IPoller.next()`
+  - `slot` - Launcher slot number
+  
+  **Returns:** Dict of environment variables (e.g., `SCRAPY_PROJECT`, `SCRAPYD_EGG_VERSION`)
+</ParamField>
+
+## IJobStorage
+
+Stores finished jobs. Defined in `scrapyd/interfaces.py:187`:
+
+```python
+class IJobStorage(Interface):
+    """
+    A component to store finished jobs.
+    """
+
+    def add(job):
+        """
+        Add a finished job in the storage.
+        """
+
+    def list():
+        """
+        Return the finished jobs.
+        """
+
+    def __len__():
+        """
+        Return the number of finished jobs.
+        """
+
+    def __iter__():
+        """
+        Iterate over the finished jobs in reverse order by ``end_time``.
+
+        A job has the attributes ``project``, ``spider``, ``job``, ``start_time`` and ``end_time``.
+        """
+```
+
+### Methods
+
+<ParamField path="add" type="method">
+  Add a finished job to storage.
+  
+  **Parameters:**
+  - `job` - `ScrapyProcessProtocol` instance with job details
+</ParamField>
+
+<ParamField path="list" type="method">
+  Return all finished jobs.
+  
+  **Returns:** List of job objects
+</ParamField>
+
+<ParamField path="__len__" type="method">
+  Return the number of finished jobs.
+  
+  **Returns:** Integer count
+</ParamField>
+
+<ParamField path="__iter__" type="method">
+  Iterate over finished jobs in reverse order by end time.
+  
+  **Yields:** Job objects with attributes:
+  - `project` - Project name
+  - `spider` - Spider name  
+  - `job` - Job ID
+  - `start_time` - datetime
+  - `end_time` - datetime
+  - `args` - CLI arguments (optional)
+  - `env` - Environment variables (optional)
+</ParamField>
+
+## Implementing Custom Interfaces
+
+To create a custom component:
+
+<Steps>
+  <Step title="Import and Implement">
+    Import the interface and use the `@implementer` decorator:
+    
+    ```python
+    from zope.interface import implementer
+    from scrapyd.interfaces import IEggStorage
+
+    @implementer(IEggStorage)
+    class S3EggStorage:
+        def __init__(self, config):
+            self.bucket = config.get('s3_bucket')
+            # Initialize S3 client
+    ```
+  </Step>
+  
+  <Step title="Implement All Methods">
+    Implement all methods defined in the interface:
+    
+    ```python
+        def put(self, eggfile, project, version):
+            key = f"{project}/{version}.egg"
+            self.s3_client.upload_fileobj(eggfile, self.bucket, key)
+
+        def get(self, project, version=None):
+            if version is None:
+                versions = self.list(project)
+                version = versions[-1] if versions else None
+            if version:
+                key = f"{project}/{version}.egg"
+                obj = self.s3_client.get_object(Bucket=self.bucket, Key=key)
+                return version, obj['Body']
+            return None, None
+
+        def list(self, project):
+            # List all versions for project
+            pass
+
+        def list_projects(self):
+            # List all projects
+            pass
+
+        def delete(self, project, version=None):
+            # Delete egg or project
+            pass
+    ```
+  </Step>
+  
+  <Step title="Configure in scrapyd.conf">
+    Set your custom component in the configuration:
+    
+    ```ini
+    [scrapyd]
+    eggstorage = mypackage.storage.S3EggStorage
+    s3_bucket = my-scrapyd-eggs
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  All component `__init__` methods must accept a `config` parameter. The launcher and webroot components also receive an `app` parameter.
+</Note>
+
+## Component Initialization
+
+Components are initialized using `scrapyd/utils.py:9`:
+
+```python
+def initialize_component(config, setting, default, *args):
+    path = config.get(setting, default)
+    cls = load_object(path)  # Scrapy's load_object
+    return cls(config, *args)
+```
+
+This allows configuration-based component selection without code changes.

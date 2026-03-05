@@ -1,0 +1,181 @@
+---
+title: "Welcome to Scrapyd"
+description: "A service daemon to run Scrapy spiders with HTTP API control"
+mode: "custom"
+---
+
+<div className="relative isolate overflow-hidden bg-gradient-to-b from-[#5d6c75] to-[#4a5660] dark:from-[#1a1d27] dark:to-[#0f1117]">
+  <div className="mx-auto max-w-7xl px-6 py-20 sm:py-24 lg:px-8">
+    <div className="mx-auto max-w-2xl text-center">
+      <h1 className="text-4xl font-bold tracking-tight text-white sm:text-6xl">
+        Deploy and Run Scrapy Spiders at Scale
+      </h1>
+      <p className="mt-6 text-lg leading-8 text-gray-100 max-w-xl mx-auto">
+        Scrapyd is a production-ready daemon service for deploying and running Scrapy spiders. 
+        Manage multiple projects, schedule jobs remotely, and monitor execution through a simple HTTP API.
+      </p>
+      <div className="mt-10 flex items-center justify-center gap-4 flex-wrap">
+        <a
+          href="/quickstart"
+          className="rounded-lg bg-white px-6 py-3 text-base font-semibold text-[#5d6c75] shadow-sm hover:bg-gray-100 transition-colors no-underline"
+        >
+          Get Started
+        </a>
+        <a
+          href="/api/overview"
+          className="rounded-lg border border-white/30 bg-white/10 px-6 py-3 text-base font-semibold text-white hover:bg-white/20 transition-colors no-underline"
+        >
+          Explore API Reference
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-3xl font-semibold text-gray-900 dark:text-white mb-3">
+    Quick Start
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Get Scrapyd running in minutes and schedule your first spider
+  </p>
+
+  <Steps>
+    <Step title="Install Scrapyd">
+      Install Scrapyd using pip:
+      
+      ```bash
+      pip install scrapyd
+      ```
+      
+      Scrapyd requires Python 3.10 or higher and works on Linux, macOS, and Windows.
+    </Step>
+
+    <Step title="Start the daemon">
+      Launch the Scrapyd service:
+      
+      ```bash
+      scrapyd
+      ```
+      
+      By default, Scrapyd listens on `http://localhost:6800`. You should see output indicating the server has started:
+      
+      <Accordion title="Expected output">
+        ```
+        2024-03-05T10:15:23-0500 [-] Scrapyd web console available at http://127.0.0.1:6800/
+        2024-03-05T10:15:23-0500 [-] Loaded.
+        ```
+      </Accordion>
+    </Step>
+
+    <Step title="Deploy your project">
+      Package and deploy your Scrapy project using scrapyd-client:
+      
+      ```bash
+      pip install scrapyd-client
+      scrapyd-deploy
+      ```
+      
+      This builds a Python egg from your project and uploads it to Scrapyd via the `addversion.json` API endpoint.
+    </Step>
+
+    <Step title="Schedule a spider">
+      Schedule a spider to run using the HTTP API:
+      
+      ```bash
+      curl http://localhost:6800/schedule.json -d project=myproject -d spider=myspider
+      ```
+      
+      <Accordion title="Response">
+        ```json
+        {
+          "status": "ok",
+          "jobid": "6487ec79947edab326d6db28a2d86511e8247444",
+          "node_name": "node1"
+        }
+        ```
+      </Accordion>
+      
+      Your spider is now running! View logs and monitor progress at `http://localhost:6800/`.
+    </Step>
+  </Steps>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-3xl font-semibold text-gray-900 dark:text-white mb-3">
+    Key Features
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Everything you need to run Scrapy spiders in production
+  </p>
+
+  <CardGroup cols={2}>
+    <Card title="HTTP JSON API" icon="code" href="/api/overview">
+      Control spiders remotely through a RESTful API. Schedule jobs, cancel runs, and query status programmatically.
+    </Card>
+    <Card title="Multi-Project Support" icon="folder-tree" href="/concepts/projects-versions">
+      Deploy and manage multiple Scrapy projects with independent version control for each.
+    </Card>
+    <Card title="Job Scheduling" icon="clock" href="/concepts/jobs-scheduling">
+      Schedule spiders with priority queues and manage concurrent execution limits per CPU.
+    </Card>
+    <Card title="Web Monitoring UI" icon="chart-line" href="/operations/monitoring">
+      Built-in web interface to view running jobs, access log files, and browse scraped items.
+    </Card>
+    <Card title="Authentication" icon="lock" href="/configuration/authentication">
+      Secure your Scrapyd instance with HTTP basic authentication support.
+    </Card>
+    <Card title="Extensible Architecture" icon="puzzle-piece" href="/advanced/interfaces">
+      Customize storage, scheduling, and environment handling through Zope interfaces.
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-3xl font-semibold text-gray-900 dark:text-white mb-3">
+    Explore by Topic
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Dive deeper into specific areas of Scrapyd
+  </p>
+
+  <CardGroup cols={3}>
+    <Card title="Core Concepts" icon="book-open" href="/concepts/overview">
+      Understand projects, versions, jobs, and how Scrapyd manages spider execution.
+    </Card>
+    <Card title="Operations Guide" icon="server" href="/operations/deploying-projects">
+      Learn how to deploy projects, run spiders, and manage jobs in production.
+    </Card>
+    <Card title="Configuration" icon="gear" href="/configuration/overview">
+      Configure bind addresses, ports, storage locations, and process limits.
+    </Card>
+    <Card title="API Reference" icon="terminal" href="/api/overview">
+      Complete reference for all HTTP API endpoints with examples and parameters.
+    </Card>
+    <Card title="Architecture" icon="diagram-project" href="/advanced/architecture">
+      Explore Scrapyd's internal architecture and plugin system.
+    </Card>
+    <Card title="Troubleshooting" icon="wrench" href="/advanced/troubleshooting">
+      Common issues and solutions for deploying and running Scrapyd.
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gray-50 dark:bg-[#1a1d27] p-8 sm:p-12">
+    <div className="mx-auto max-w-2xl text-center">
+      <h2 className="text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+        Ready to Deploy Your Spiders?
+      </h2>
+      <p className="text-base text-gray-600 dark:text-gray-400 mb-6">
+        Follow our quickstart guide to get Scrapyd running and deploy your first Scrapy project in minutes.
+      </p>
+      <a
+        href="/quickstart"
+        className="inline-block rounded-lg bg-[#5d6c75] px-6 py-3 text-base font-semibold text-white hover:bg-[#4a5660] transition-colors no-underline"
+      >
+        Start Deploying
+      </a>
+    </div>
+  </div>
+</div>

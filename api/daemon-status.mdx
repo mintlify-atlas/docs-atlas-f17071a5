@@ -1,0 +1,192 @@
+---
+title: 'daemonstatus.json'
+description: 'Get the load status of the Scrapyd daemon'
+---
+
+<Note>
+  Added in Scrapyd 1.2.0
+</Note>
+
+## Overview
+
+Check the load status of the Scrapyd daemon, including the number of pending, running, and finished jobs across all projects.
+
+## HTTP Method
+
+```
+GET /daemonstatus.json
+```
+
+## Parameters
+
+This endpoint accepts no parameters.
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+<ResponseField name="pending" type="integer" required>
+  Total number of pending jobs across all projects
+</ResponseField>
+
+<ResponseField name="running" type="integer" required>
+  Total number of currently running jobs
+</ResponseField>
+
+<ResponseField name="finished" type="integer" required>
+  Total number of finished jobs in storage
+</ResponseField>
+
+## Examples
+
+### Get Daemon Status
+
+```bash
+curl http://localhost:6800/daemonstatus.json
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "pending": 5,
+  "running": 2,
+  "finished": 10
+}
+```
+
+### With Authentication
+
+If basic authentication is enabled:
+
+```bash
+curl -u username:password http://localhost:6800/daemonstatus.json
+```
+
+## Use Cases
+
+### Health Monitoring
+
+Check if the daemon is responsive:
+
+```bash
+#!/bin/bash
+if curl -s http://localhost:6800/daemonstatus.json | grep -q '"status":"ok"'; then
+  echo "Scrapyd is healthy"
+else
+  echo "Scrapyd is not responding"
+fi
+```
+
+### Load Balancing
+
+Choose the least loaded node in a cluster:
+
+```python
+import requests
+
+nodes = [
+    "http://node1:6800",
+    "http://node2:6800",
+    "http://node3:6800"
+]
+
+def get_load(node_url):
+    response = requests.get(f"{node_url}/daemonstatus.json")
+    data = response.json()
+    return data["pending"] + data["running"]
+
+# Find node with lowest load
+best_node = min(nodes, key=get_load)
+print(f"Scheduling job on: {best_node}")
+```
+
+### Capacity Planning
+
+Monitor daemon load over time:
+
+```python
+import requests
+import time
+import json
+
+while True:
+    response = requests.get("http://localhost:6800/daemonstatus.json")
+    data = response.json()
+    
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
+          f"Pending: {data['pending']}, "
+          f"Running: {data['running']}, "
+          f"Finished: {data['finished']}")
+    
+    time.sleep(60)  # Check every minute
+```
+
+### Prometheus Metrics Export
+
+```python
+from flask import Flask, Response
+import requests
+
+app = Flask(__name__)
+
+@app.route('/metrics')
+def metrics():
+    response = requests.get("http://localhost:6800/daemonstatus.json")
+    data = response.json()
+    
+    metrics = f"""
+# HELP scrapyd_pending_jobs Number of pending jobs
+# TYPE scrapyd_pending_jobs gauge
+scrapyd_pending_jobs {data['pending']}
+
+# HELP scrapyd_running_jobs Number of running jobs
+# TYPE scrapyd_running_jobs gauge
+scrapyd_running_jobs {data['running']}
+
+# HELP scrapyd_finished_jobs Number of finished jobs
+# TYPE scrapyd_finished_jobs gauge
+scrapyd_finished_jobs {data['finished']}
+    """
+    
+    return Response(metrics, mimetype='text/plain')
+
+if __name__ == '__main__':
+    app.run(port=9090)
+```
+
+## Notes
+
+<Info>
+  The `finished` count represents jobs in the job storage. With the default in-memory storage, this resets to 0 when Scrapyd restarts.
+</Info>
+
+<Tip>
+  Use this endpoint for health checks in load balancers and orchestration systems like Kubernetes.
+</Tip>
+
+<Warning>
+  This endpoint shows aggregate counts across all projects. For per-project details, use [listjobs.json](/api/list-jobs).
+</Warning>
+
+## Comparison with listjobs.json
+
+| Feature | daemonstatus.json | listjobs.json |
+|---------|------------------|---------------|
+| Speed | Fast (counts only) | Slower (full details) |
+| Scope | All projects | Single project or all |
+| Detail | Counts only | Full job details |
+| Use case | Health checks, monitoring | Job management |
+
+## Related Endpoints
+
+- [listjobs.json](/api/list-jobs) - Get detailed job information
+- [listprojects.json](/api/list-projects) - List all projects

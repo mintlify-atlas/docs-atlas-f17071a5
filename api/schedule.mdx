@@ -1,0 +1,229 @@
+---
+title: 'schedule.json'
+description: 'Schedule a Scrapy job'
+---
+
+## Overview
+
+Schedule a job (a Scrapy crawl) to run. Jobs are added to the project's spider queue and processed based on priority.
+
+<Info>
+  If the `logs_dir` setting is configured, log files are written to `{logs_dir}/{project}/{spider}/{jobid}.log`.
+</Info>
+
+## HTTP Method
+
+```
+POST /schedule.json
+```
+
+## Parameters
+
+<ParamField path="project" type="string" required>
+  The project name
+</ParamField>
+
+<ParamField path="spider" type="string" required>
+  The spider name
+</ParamField>
+
+<ParamField path="_version" type="string">
+  The project version to use (defaults to the latest version)
+</ParamField>
+
+<ParamField path="jobid" type="string">
+  The job's unique identifier (defaults to a hexadecimal UUID v1)
+  
+  This determines the log file name: `{jobid}.log`
+</ParamField>
+
+<ParamField path="priority" type="float" default="0">
+  The job's priority in the project's spider queue
+  
+  Higher numbers = higher priority. Jobs with higher priority are processed first.
+</ParamField>
+
+<ParamField path="setting" type="string">
+  A Scrapy setting in the format `SETTING_NAME=value`
+  
+  Can be specified multiple times to set multiple settings.
+</ParamField>
+
+<ParamField path="*" type="string">
+  Any other parameter is passed as a spider argument
+  
+  <Warning>
+    When a parameter is set multiple times, only the first value is sent to the spider.
+  </Warning>
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success, `"error"` on failure
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+<ResponseField name="jobid" type="string">
+  The scheduled job's unique identifier (returned on success)
+</ResponseField>
+
+## Examples
+
+### Basic Example
+
+Schedule a spider with default settings:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "jobid": "6487ec79947edab326d6db28a2d86511e8247444"
+}
+```
+
+### With Custom Job ID
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d jobid=my-custom-job-id
+```
+
+### With Priority
+
+Schedule a high-priority job:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d priority=10
+```
+
+### With Scrapy Settings
+
+Set the download delay:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d setting=DOWNLOAD_DELAY=2
+```
+
+Multiple settings:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d setting=DOWNLOAD_DELAY=2 \
+  -d setting=CONCURRENT_REQUESTS=8
+```
+
+### With Spider Arguments
+
+Pass custom arguments to your spider:
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d arg1=val1 \
+  -d arg2=val2
+```
+
+### With Specific Version
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=somespider \
+  -d _version=r23
+```
+
+### Complete Example
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=productspider \
+  -d _version=r23 \
+  -d jobid=products-2026-03-05 \
+  -d priority=5 \
+  -d setting=DOWNLOAD_DELAY=1 \
+  -d category=electronics \
+  -d max_pages=100
+```
+
+## Error Cases
+
+### Project Not Found
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "project 'myproject' not found"
+}
+```
+
+### Spider Not Found
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "spider 'somespider' not found"
+}
+```
+
+### Version Not Found
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "version 'r99' not found"
+}
+```
+
+### Missing Required Parameter
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "'project' parameter is required"
+}
+```
+
+## Notes
+
+<Info>
+  Your spider's `__init__` method should accept `**kwargs` to handle internally-generated arguments that Scrapyd adds when starting crawls.
+</Info>
+
+<Tip>
+  Use the `jobid` parameter to create meaningful log file names, making it easier to identify jobs later.
+</Tip>
+
+## Related Endpoints
+
+- [cancel.json](/api/cancel) - Cancel a scheduled or running job
+- [status.json](/api/status) - Check the status of a job
+- [listjobs.json](/api/list-jobs) - View all jobs for a project
+- [listspiders.json](/api/list-spiders) - List available spiders

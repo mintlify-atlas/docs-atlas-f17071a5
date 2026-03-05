@@ -1,0 +1,590 @@
+---
+title: Troubleshooting
+description: Common issues and solutions when running Scrapyd
+---
+
+This guide covers common issues you may encounter when deploying and running Scrapyd in production.
+
+## Deployment Issues
+
+### Port Already in Use
+
+If you see an error like:
+
+```
+twisted.internet.error.CannotListenError: Couldn't listen on 127.0.0.1:6800
+```
+
+**Cause:** Another process is using port 6800.
+
+**Solutions:**
+
+<AccordionGroup>
+  <Accordion title="Check what's using the port">
+    ```bash
+    # Linux/Mac
+    lsof -i :6800
+    
+    # Or using netstat
+    netstat -tuln | grep 6800
+    ```
+  </Accordion>
+
+  <Accordion title="Use a different port">
+    Set a different port via configuration or environment variable:
+    
+    ```ini
+    [scrapyd]
+    http_port = 6801
+    ```
+    
+    Or:
+    
+    ```bash
+    SCRAPYD_HTTP_PORT=6801 scrapyd
+    ```
+  </Accordion>
+
+  <Accordion title="Use Unix socket instead">
+    Configure Scrapyd to listen on a Unix socket:
+    
+    ```ini
+    [scrapyd]
+    bind_address =
+    http_port =
+    unix_socket_path = /tmp/scrapyd.sock
+    ```
+    
+    Access via:
+    ```bash
+    curl --unix-socket /tmp/scrapyd.sock http://localhost/daemonstatus.json
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Permission Denied Errors
+
+**Symptoms:**
+
+```
+PermissionError: [Errno 13] Permission denied: '/var/lib/scrapyd/eggs'
+```
+
+**Cause:** Scrapyd doesn't have write permissions to configured directories.
+
+**Solutions:**
+
+1. **Create directories with proper permissions:**
+
+```bash
+sudo mkdir -p /var/lib/scrapyd/{eggs,dbs,logs,items}
+sudo chown -R scrapyd:scrapyd /var/lib/scrapyd
+sudo chmod 755 /var/lib/scrapyd
+```
+
+2. **Run Scrapyd as the correct user:**
+
+```bash
+sudo -u scrapyd scrapyd
+```
+
+3. **Use user-writable directories:**
+
+```ini
+[scrapyd]
+eggs_dir = ~/.scrapyd/eggs
+dbs_dir = ~/.scrapyd/dbs
+logs_dir = ~/.scrapyd/logs
+items_dir = ~/.scrapyd/items
+```
+
+### Bind Address Not Available
+
+**Error:**
+
+```
+twisted.internet.error.CannotListenError: Couldn't listen on 0.0.0.0:6800
+```
+
+**Cause:** Trying to bind to all interfaces without sufficient privileges, or address already in use.
+
+**Solutions:**
+
+1. **Bind to localhost only:**
+
+```ini
+[scrapyd]
+bind_address = 127.0.0.1
+```
+
+2. **Run with appropriate privileges (not recommended for production):**
+
+```bash
+sudo scrapyd
+```
+
+3. **Use a reverse proxy** (recommended):
+
+Run Scrapyd on localhost and use nginx/Apache to expose it:
+
+```nginx
+server {
+    listen 80;
+    server_name scrapyd.example.com;
+    
+    location / {
+        proxy_pass http://127.0.0.1:6800;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+## Egg Upload Issues
+
+### Egg Upload Fails
+
+**Error in response:**
+
+```json
+{"status": "error", "message": "..."}
+```
+
+**Common causes:**
+
+<AccordionGroup>
+  <Accordion title="Invalid egg file">
+    **Symptom:** `BadEggError` in logs
+    
+    **Cause:** The uploaded file is not a valid Python egg.
+    
+    **Solution:** Rebuild the egg using `scrapyd-client`:
+    ```bash
+    scrapyd-deploy --build-egg=project.egg
+    ```
+    
+    Verify it's a valid zip file:
+    ```bash
+    unzip -t project.egg
+    ```
+  </Accordion>
+
+  <Accordion title="Missing entry points">
+    **Symptom:** Spider not found when scheduling
+    
+    **Cause:** The egg doesn't have proper Scrapy entry points.
+    
+    **Solution:** Check `setup.py` includes:
+    ```python
+    from setuptools import setup, find_packages
+
+    setup(
+        name='project',
+        version='1.0',
+        packages=find_packages(),
+        entry_points={'scrapy': ['settings = myproject.settings']},
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="Directory traversal error">
+    **Symptom:** `DirectoryTraversalError` in logs
+    
+    **Cause:** Project name contains path separators like `../`
+    
+    **Solution:** Use valid project names without special characters:
+    ```bash
+    # Bad
+    curl http://localhost:6800/addversion.json -F project=../etc/passwd
+    
+    # Good
+    curl http://localhost:6800/addversion.json -F project=myproject
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Version Not Found
+
+**Error when scheduling:**
+
+```json
+{"status": "error", "message": "version not found"}
+```
+
+**Solutions:**
+
+1. **Check available versions:**
+
+```bash
+curl http://localhost:6800/listversions.json?project=myproject
+```
+
+2. **Don't specify version** (uses latest):
+
+```bash
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=myspider
+  # Don't include -d _version=...
+```
+
+3. **Check eggs directory:**
+
+```bash
+ls -la eggs/myproject/
+```
+
+Ensure egg files exist with proper naming (e.g., `1_0_0.egg`).
+
+## Spider Execution Errors
+
+### Spider Not Found
+
+**Error:**
+
+```json
+{"status": "error", "message": "Spider not found: myspider"}
+```
+
+**Debugging steps:**
+
+1. **Verify spider exists in the egg:**
+
+```bash
+curl http://localhost:6800/listspiders.json?project=myproject
+```
+
+2. **Check spider name** in your Scrapy project:
+
+```python
+class MySpider(scrapy.Spider):
+    name = 'myspider'  # Must match the name in schedule request
+```
+
+3. **Rebuild and redeploy** the egg:
+
+```bash
+scrapyd-deploy
+```
+
+### Job Fails Immediately
+
+**Symptom:** Job shows in `listjobs.json` as finished immediately with no output.
+
+**Check the logs:**
+
+```bash
+# Default location
+tail -f logs/myproject/myspider/<jobid>.log
+```
+
+**Common issues:**
+
+- **Import errors:** Missing dependencies in the egg
+- **Settings errors:** Invalid Scrapy settings
+- **Permission errors:** Can't write to JOBDIR or FEEDS locations
+
+**View detailed error:**
+
+```bash
+curl http://localhost:6800/logs/myproject/myspider/<jobid>.log
+```
+
+### Process Spawning Fails
+
+**Error in Scrapyd logs:**
+
+```
+scrapyd.exceptions.LauncherError: [Errno 2] No such file or directory
+```
+
+**Cause:** Python executable not found or `scrapyd.runner` module not accessible.
+
+**Solutions:**
+
+1. **Verify Python is in PATH:**
+
+```bash
+which python
+# or
+which python3
+```
+
+2. **Check Scrapyd can import runner:**
+
+```bash
+python -m scrapyd.runner --help
+```
+
+3. **Specify Python executable explicitly:**
+
+Modify `scrapyd/launcher.py:64` or create a custom launcher.
+
+### Jobs Stuck in Pending
+
+**Symptom:** Jobs remain in pending state and never run.
+
+**Check Scrapyd is running:**
+
+```bash
+curl http://localhost:6800/daemonstatus.json
+```
+
+**Verify max_proc setting:**
+
+```ini
+[scrapyd]
+max_proc = 4  # Or higher
+max_proc_per_cpu = 4
+```
+
+**Check current running jobs:**
+
+```bash
+curl http://localhost:6800/listjobs.json?project=myproject
+```
+
+If `running` count equals `max_proc`, jobs are queued normally.
+
+**Restart Scrapyd** to refresh the poller:
+
+```bash
+pkill -f scrapyd
+scrapyd
+```
+
+## Log File Issues
+
+### Logs Not Created
+
+**Symptom:** No log files appear in `logs_dir`.
+
+**Causes and solutions:**
+
+1. **Logging disabled in configuration:**
+
+```ini
+[scrapyd]
+logs_dir =  # Empty means disabled
+```
+
+Set a valid directory:
+
+```ini
+logs_dir = logs
+```
+
+2. **Permission issues:**
+
+```bash
+sudo chown -R scrapyd:scrapyd logs/
+sudo chmod 755 logs/
+```
+
+3. **Log directory doesn't exist:**
+
+Scrapyd creates it automatically, but verify:
+
+```bash
+mkdir -p logs
+```
+
+### Logs Directory Growing Too Large
+
+**Issue:** Old log files accumulate and consume disk space.
+
+**Solution:** Configure log retention (`scrapyd/environ.py:22`):
+
+```ini
+[scrapyd]
+jobs_to_keep = 5  # Keep only 5 most recent logs per spider
+```
+
+Or set up log rotation:
+
+```bash
+# /etc/logrotate.d/scrapyd
+/var/lib/scrapyd/logs/*/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+}
+```
+
+## Database Issues
+
+### SQLite Database Locked
+
+**Error:**
+
+```
+sqlite3.OperationalError: database is locked
+```
+
+**Cause:** Multiple Scrapyd instances or processes accessing the same database.
+
+**Solutions:**
+
+1. **Ensure only one Scrapyd instance per database:**
+
+```bash
+ps aux | grep scrapyd
+# Kill duplicate instances
+```
+
+2. **Use separate databases per instance:**
+
+```ini
+# Instance 1
+[scrapyd]
+dbs_dir = /var/lib/scrapyd1/dbs
+
+# Instance 2  
+[scrapyd]
+dbs_dir = /var/lib/scrapyd2/dbs
+```
+
+3. **Use in-memory queues** (not persistent):
+
+```ini
+[scrapyd]
+dbs_dir = :memory:
+```
+
+### Corrupted Database
+
+**Error:**
+
+```
+sqlite3.DatabaseError: database disk image is malformed
+```
+
+**Recovery:**
+
+1. **Backup the database:**
+
+```bash
+cp dbs/myproject.db dbs/myproject.db.backup
+```
+
+2. **Attempt SQLite recovery:**
+
+```bash
+sqlite3 dbs/myproject.db ".dump" | sqlite3 dbs/myproject_new.db
+mv dbs/myproject_new.db dbs/myproject.db
+```
+
+3. **Clear the queue** (loses pending jobs):
+
+```bash
+rm dbs/myproject.db
+```
+
+Scrapyd will recreate it on next access.
+
+## Performance Issues
+
+### High Memory Usage
+
+**Symptom:** Scrapyd process consumes excessive memory.
+
+**Causes:**
+
+1. **Too many concurrent spiders:**
+
+Reduce `max_proc`:
+
+```ini
+[scrapyd]
+max_proc = 2
+```
+
+2. **Large job storage:**
+
+Reduce `finished_to_keep`:
+
+```ini
+[scrapyd]
+finished_to_keep = 50
+```
+
+3. **Memory leaks in spiders:**
+
+Profile spider memory usage and fix leaks.
+
+### High CPU Usage
+
+**Symptom:** Scrapyd uses 100% CPU even when idle.
+
+**Causes:**
+
+1. **Polling interval too short:**
+
+Increase `poll_interval`:
+
+```ini
+[scrapyd]
+poll_interval = 10  # Seconds
+```
+
+2. **Too many projects:**
+
+Split projects across multiple Scrapyd instances.
+
+## Debugging Tools
+
+### Enable Debug Logging
+
+Run Scrapyd with verbose logging:
+
+```bash
+twistd -n scrapyd --logfile=- --loglevel=DEBUG
+```
+
+### Check Component Initialization
+
+Verify components are loaded correctly:
+
+```python
+from scrapyd.config import Config
+from scrapyd.app import application
+
+config = Config()
+app = application(config)
+
+from scrapyd.interfaces import IEggStorage
+print(app.getComponent(IEggStorage))
+```
+
+### Monitor Job Queue
+
+Query the SQLite database directly:
+
+```bash
+sqlite3 dbs/myproject.db "SELECT * FROM spider_queue;"
+```
+
+### Test Component Isolation
+
+Test individual components:
+
+```python
+from scrapyd.config import Config
+from scrapyd.eggstorage import FilesystemEggStorage
+
+config = Config()
+storage = FilesystemEggStorage(config)
+print(storage.list_projects())
+```
+
+## Getting Help
+
+If you're still experiencing issues:
+
+1. **Check the GitHub issues:** [github.com/scrapy/scrapyd/issues](https://github.com/scrapy/scrapyd/issues)
+2. **Review the Scrapy documentation** for spider-level issues: [docs.scrapy.org](https://docs.scrapy.org)
+3. **Enable debug logging** and include relevant logs when reporting issues
+4. **Provide a minimal reproducible example** when filing bug reports

@@ -1,0 +1,348 @@
+---
+title: 'addversion.json'
+description: 'Add a version to a project'
+---
+
+## Overview
+
+Add a new version to a project in egg storage, creating the project if it doesn't exist.
+
+## HTTP Method
+
+```
+POST /addversion.json
+```
+
+## Parameters
+
+<ParamField path="project" type="string" required>
+  The project name
+</ParamField>
+
+<ParamField path="version" type="string" required>
+  The version identifier
+  
+  Scrapyd uses Python's [packaging.version.Version](https://packaging.pypa.io/en/stable/version.html) to interpret version numbers.
+</ParamField>
+
+<ParamField path="egg" type="file" required>
+  A Python egg file containing the project's code
+  
+  The egg must be a valid ZIP file with an entry point to the Scrapy settings.
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success, `"error"` on failure
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+<ResponseField name="project" type="string">
+  The project name (echoed back)
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  The version identifier (echoed back)
+</ResponseField>
+
+<ResponseField name="spiders" type="integer">
+  The number of spiders discovered in the uploaded version
+</ResponseField>
+
+## Examples
+
+### Upload an Egg File
+
+```bash
+curl http://localhost:6800/addversion.json \
+  -F project=myproject \
+  -F version=r23 \
+  -F egg=@myproject.egg
+```
+
+<Warning>
+  Use `-F egg=@myproject.egg` (with `@`) to upload the file. Using `-F egg=myproject.egg` (without `@`) will send the filename as a string, not the file contents.
+</Warning>
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "project": "myproject",
+  "version": "r23",
+  "spiders": 3
+}
+```
+
+### With Authentication
+
+```bash
+curl -u username:password http://localhost:6800/addversion.json \
+  -F project=myproject \
+  -F version=r23 \
+  -F egg=@myproject.egg
+```
+
+### Using scrapyd-client
+
+The easiest way to deploy is using `scrapyd-deploy` from the [scrapyd-client](https://github.com/scrapy/scrapyd-client) package:
+
+```bash
+scrapyd-deploy
+```
+
+This automatically builds the egg and uploads it.
+
+## Creating a Valid Egg File
+
+### Setup.py Configuration
+
+Your `setup.py` must include an entry point for Scrapy settings:
+
+```python
+from setuptools import setup, find_packages
+
+setup(
+    name='myproject',
+    version='1.0',
+    packages=find_packages(),
+    entry_points={'scrapy': ['settings = myproject.settings']},
+)
+```
+
+The `entry_points` line tells Scrapy where to find your settings module.
+
+### Building the Egg
+
+```bash
+python setup.py bdist_egg
+```
+
+The egg file is created in `dist/myproject-1.0-py3.10.egg`.
+
+### Project Structure
+
+```
+myproject/
+├── setup.py
+├── scrapy.cfg
+└── myproject/
+    ├── __init__.py
+    ├── settings.py
+    ├── items.py
+    ├── pipelines.py
+    └── spiders/
+        ├── __init__.py
+        ├── spider1.py
+        └── spider2.py
+```
+
+## Error Cases
+
+### Invalid Egg File
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "egg is not a ZIP file (if using curl, use egg=@path not egg=path)"
+}
+```
+
+### Missing Required Parameter
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "'project' parameter is required"
+}
+```
+
+### Invalid Version Format
+
+If the version string can't be parsed:
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "egg is invalid: ..."
+}
+```
+
+## Use Cases
+
+### Automated Deployment
+
+```bash
+#!/bin/bash
+
+PROJECT="myproject"
+VERSION="$(git rev-parse --short HEAD)"
+
+# Build egg
+python setup.py bdist_egg
+
+# Find the egg file
+EGG_FILE=$(ls -t dist/*.egg | head -1)
+
+# Deploy to Scrapyd
+curl http://localhost:6800/addversion.json \
+  -F project=$PROJECT \
+  -F version=$VERSION \
+  -F egg=@$EGG_FILE
+```
+
+### Deploy to Multiple Nodes
+
+```python
+import requests
+import sys
+
+nodes = [
+    "http://node1:6800",
+    "http://node2:6800",
+    "http://node3:6800"
+]
+
+project = "myproject"
+version = "r23"
+egg_path = "dist/myproject-1.0-py3.10.egg"
+
+for node in nodes:
+    with open(egg_path, 'rb') as f:
+        response = requests.post(
+            f"{node}/addversion.json",
+            data={"project": project, "version": version},
+            files={"egg": f}
+        )
+    
+    if response.json()['status'] == 'ok':
+        spiders = response.json()['spiders']
+        print(f"✓ {node}: Deployed {spiders} spiders")
+    else:
+        print(f"✗ {node}: {response.json()['message']}")
+        sys.exit(1)
+
+print(f"\nSuccessfully deployed to all {len(nodes)} nodes")
+```
+
+### CI/CD Integration
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy to Scrapyd
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.10'
+      
+      - name: Build egg
+        run: |
+          pip install setuptools wheel
+          python setup.py bdist_egg
+      
+      - name: Deploy to Scrapyd
+        env:
+          SCRAPYD_URL: ${{ secrets.SCRAPYD_URL }}
+          SCRAPYD_USER: ${{ secrets.SCRAPYD_USER }}
+          SCRAPYD_PASSWORD: ${{ secrets.SCRAPYD_PASSWORD }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          EGG_FILE=$(ls -t dist/*.egg | head -1)
+          
+          curl -u "$SCRAPYD_USER:$SCRAPYD_PASSWORD" \
+            "$SCRAPYD_URL/addversion.json" \
+            -F project=myproject \
+            -F version=$VERSION \
+            -F egg=@$EGG_FILE
+```
+
+### Verify Deployment
+
+```python
+import requests
+import time
+
+project = "myproject"
+version = "r23"
+egg_path = "dist/myproject-1.0-py3.10.egg"
+
+# Deploy
+with open(egg_path, 'rb') as f:
+    response = requests.post(
+        "http://localhost:6800/addversion.json",
+        data={"project": project, "version": version},
+        files={"egg": f}
+    )
+
+if response.json()['status'] != 'ok':
+    print(f"Deployment failed: {response.json()['message']}")
+    exit(1)
+
+print(f"Deployed {response.json()['spiders']} spiders")
+
+# Verify version exists
+time.sleep(1)
+versions_response = requests.get(
+    f"http://localhost:6800/listversions.json?project={project}"
+)
+versions = versions_response.json()['versions']
+
+if version in versions:
+    print(f"✓ Version {version} is available")
+    print(f"  Latest version: {versions[-1]}")
+else:
+    print(f"✗ Version {version} not found in version list")
+    exit(1)
+
+# Verify spiders
+spiders_response = requests.get(
+    f"http://localhost:6800/listspiders.json?project={project}&_version={version}"
+)
+spiders = spiders_response.json()['spiders']
+
+print(f"✓ Spiders in {version}:")
+for spider in spiders:
+    print(f"  - {spider}")
+```
+
+## Notes
+
+<Info>
+  If the project doesn't exist, it will be created automatically. You don't need to create projects explicitly.
+</Info>
+
+<Tip>
+  Use semantic versioning (e.g., `1.0.0`, `1.1.0`, `2.0.0`) for clear version ordering. Scrapyd uses Python's packaging library to parse and sort versions.
+</Tip>
+
+<Warning>
+  Uploading a version with the same name as an existing version will overwrite the old version.
+</Warning>
+
+## Related Endpoints
+
+- [listversions.json](/api/list-versions) - List all versions
+- [deleteversion.json](/api/delete-version) - Delete a version
+- [listspiders.json](/api/list-spiders) - List spiders in a version
+- [schedule.json](/api/schedule) - Schedule a spider from a version

@@ -1,0 +1,113 @@
+---
+title: 'API Overview'
+description: 'Understanding the Scrapyd JSON API'
+---
+
+## Introduction
+
+Scrapyd provides a JSON API for managing Scrapy projects and jobs. All endpoints return JSON responses and follow a consistent format.
+
+## Base URL
+
+By default, Scrapyd runs on:
+
+```
+http://localhost:6800
+```
+
+All API endpoints are available at `http://localhost:6800/<endpoint>.json`.
+
+## Authentication
+
+If [basic authentication](/configuration/security#username) is enabled, you must provide credentials with each request:
+
+```bash
+curl -u username:password http://localhost:6800/daemonstatus.json
+```
+
+## Response Format
+
+All API responses include these common fields:
+
+<ResponseField name="status" type="string" required>
+  Either `"ok"` on success or `"error"` on failure
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node (configured via `node_name` setting)
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Error message (only present when `status` is `"error"`)
+</ResponseField>
+
+### Success Response Example
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "projects": ["myproject"]
+}
+```
+
+### Error Response Example
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "project 'unknown' not found"
+}
+```
+
+## Available Endpoints
+
+### Job Management
+
+- [schedule.json](/api/schedule) - Schedule a new job
+- [cancel.json](/api/cancel) - Cancel a pending or running job
+- [status.json](/api/status) - Get the status of a job
+- [listjobs.json](/api/list-jobs) - List all pending, running, and finished jobs
+
+### Project Management
+
+- [listprojects.json](/api/list-projects) - List all projects
+- [listversions.json](/api/list-versions) - List versions of a project
+- [listspiders.json](/api/list-spiders) - List spiders in a project
+- [addversion.json](/api/add-version) - Add a new version to a project
+- [deleteproject.json](/api/delete-project) - Delete a project
+- [deleteversion.json](/api/delete-version) - Delete a specific version
+
+### Daemon Status
+
+- [daemonstatus.json](/api/daemon-status) - Get daemon load status
+
+## CORS Support
+
+All endpoints include CORS headers, allowing cross-origin requests:
+
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, OPTIONS, HEAD
+Access-Control-Allow-Headers: X-Requested-With
+```
+
+## HTTP Methods
+
+Endpoints support these methods:
+
+- **GET** - For retrieving information (status, lists)
+- **POST** - For modifying state (scheduling, canceling, adding, deleting)
+- **OPTIONS** - For CORS preflight requests
+- **HEAD** - Same as GET but without response body
+
+## Error Handling
+
+Errors are returned with HTTP 200 status code and `"status": "error"` in the JSON response. Common error scenarios:
+
+- **Missing required parameter**: `"'project' parameter is required"`
+- **Project not found**: `"project 'myproject' not found"`
+- **Spider not found**: `"spider 'myspider' not found"`
+- **Version not found**: `"version 'r99' not found"`
+- **Invalid egg file**: `"egg is not a ZIP file (if using curl, use egg=@path not egg=path)"`

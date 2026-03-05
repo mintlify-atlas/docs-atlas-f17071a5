@@ -1,0 +1,197 @@
+---
+title: Installation
+description: Install Scrapyd and its dependencies to deploy and run Scrapy spiders as a service
+---
+
+Scrapyd is a service for deploying and running Scrapy spiders. It provides an HTTP API for uploading Scrapy projects and controlling their spiders.
+
+## Requirements
+
+<Note>
+Scrapyd requires Python 3.10 or higher. Supported versions include Python 3.10, 3.11, 3.12, and 3.13.
+</Note>
+
+### Core Dependencies
+
+Scrapyd automatically installs the following dependencies:
+
+- **Scrapy** (>=2.0.0) - The web scraping framework
+- **Twisted** (>=17.9) - Asynchronous networking engine
+- **setuptools** (>=67.7.0, &lt;81) - Package installation tools
+- **packaging** - Core utilities for Python packages
+- **w3lib** - Web-related helper functions
+- **zope.interface** - Interface definitions
+
+<Warning>
+On Windows, Scrapyd requires **pywin32** for process management. This dependency is installed automatically on Windows systems.
+</Warning>
+
+## Installation Methods
+
+### Install from PyPI
+
+The recommended way to install Scrapyd is via pip:
+
+```bash
+pip install scrapyd
+```
+
+This installs the `scrapyd` command globally, making it available from any directory.
+
+### Install in Virtual Environment
+
+For isolated installations, use a virtual environment:
+
+```bash
+# Create virtual environment
+python -m venv scrapyd-env
+
+# Activate virtual environment
+# On Linux/macOS:
+source scrapyd-env/bin/activate
+# On Windows:
+scrapyd-env\Scripts\activate
+
+# Install Scrapyd
+pip install scrapyd
+```
+
+### Verify Installation
+
+Check that Scrapyd is installed correctly:
+
+```bash
+scrapyd --version
+```
+
+Expected output:
+```
+Scrapyd 1.6.0
+```
+
+## Platform-Specific Notes
+
+### Linux
+
+<Steps>
+  <Step title="Install Python 3.10+">
+    Ensure you have Python 3.10 or higher:
+    ```bash
+    python3 --version
+    ```
+  </Step>
+  
+  <Step title="Install build dependencies">
+    Some dependencies require compilation tools:
+    ```bash
+    # Debian/Ubuntu
+    sudo apt-get install python3-dev build-essential
+    
+    # Fedora/RHEL
+    sudo dnf install python3-devel gcc
+    ```
+  </Step>
+  
+  <Step title="Install Scrapyd">
+    ```bash
+    pip install scrapyd
+    ```
+  </Step>
+</Steps>
+
+### macOS
+
+<Steps>
+  <Step title="Install Python 3.10+">
+    Use Homebrew to install Python:
+    ```bash
+    brew install python@3.12
+    ```
+  </Step>
+  
+  <Step title="Install Scrapyd">
+    ```bash
+    pip3 install scrapyd
+    ```
+  </Step>
+</Steps>
+
+### Windows
+
+<Steps>
+  <Step title="Install Python 3.10+">
+    Download Python from [python.org](https://www.python.org/downloads/) and ensure "Add Python to PATH" is checked during installation.
+  </Step>
+  
+  <Step title="Install Scrapyd">
+    Open Command Prompt or PowerShell:
+    ```bash
+    pip install scrapyd
+    ```
+    The **pywin32** dependency is installed automatically on Windows.
+  </Step>
+</Steps>
+
+<Warning>
+**Windows-Specific Considerations:**
+- Scrapyd uses `pywin32` for Windows process management
+- Signal handling differs on Windows (uses SIGBREAK instead of SIGINT for job cancellation)
+- Configuration file location: `c:\scrapyd\scrapyd.conf`
+</Warning>
+
+## Post-Installation
+
+After installation, you can:
+
+1. **Start Scrapyd** - Run `scrapyd` to start the daemon
+2. **Configure Scrapyd** - Create a configuration file (see [Configuration](/configuration/overview))
+3. **Deploy projects** - Use the API to upload Scrapy projects (see [Deploying](/operations/deploying-projects))
+
+## Development Installation
+
+To install Scrapyd for development with testing dependencies:
+
+```bash
+# Clone the repository
+git clone https://github.com/scrapy/scrapyd.git
+cd scrapyd
+
+# Install in editable mode with test dependencies
+pip install -e ".[test]"
+```
+
+Test dependencies include:
+- `pytest` and `pytest-twisted` - Testing framework
+- `coverage` - Code coverage analysis
+- `requests` - HTTP client for integration tests
+
+## Troubleshooting
+
+### ImportError: No module named 'scrapyd'
+
+Ensure pip installed to the correct Python environment:
+```bash
+python -m pip install scrapyd
+```
+
+### Permission Denied Errors
+
+On Linux/macOS, use `--user` flag to install without sudo:
+```bash
+pip install --user scrapyd
+```
+
+### Twisted Installation Fails
+
+Install build tools for your platform (see Platform-Specific Notes above) before installing Scrapyd.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get started with your first Scrapyd deployment
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Configure Scrapyd for your environment
+  </Card>
+</CardGroup>

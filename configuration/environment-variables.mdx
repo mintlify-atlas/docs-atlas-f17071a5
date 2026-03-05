@@ -1,0 +1,462 @@
+---
+title: Environment Variables
+description: Override Scrapyd configuration settings using environment variables
+---
+
+Scrapyd supports environment variables to override specific configuration settings. This is useful for deployment scenarios where you want to keep sensitive information out of configuration files or adjust settings per environment.
+
+<Note>
+  Environment variable support was added in Scrapyd 1.5.0
+</Note>
+
+## Available Environment Variables
+
+The following environment variables override their corresponding configuration settings:
+
+| Environment Variable | Configuration Setting | Default Value |
+|---------------------|----------------------|---------------|
+| `SCRAPYD_BIND_ADDRESS` | [bind_address](/configuration/settings-reference#bind_address) | `127.0.0.1` |
+| `SCRAPYD_HTTP_PORT` | [http_port](/configuration/settings-reference#http_port) | `6800` |
+| `SCRAPYD_USERNAME` | [username](/configuration/settings-reference#username) | `""` (empty) |
+| `SCRAPYD_PASSWORD` | [password](/configuration/settings-reference#password) | `""` (empty) |
+| `SCRAPYD_UNIX_SOCKET_PATH` | [unix_socket_path](/configuration/settings-reference#unix_socket_path) | `""` (empty) |
+
+## Precedence
+
+Environment variables have the **highest precedence** and override values from all configuration files:
+
+1. Built-in defaults (lowest priority)
+2. System configuration files (`/etc/scrapyd/scrapyd.conf`, etc.)
+3. User configuration files (`~/.scrapyd.conf`, `scrapyd.conf`)
+4. Environment variables (highest priority)
+
+## Usage Examples
+
+### Basic Example
+
+Set environment variables before starting Scrapyd:
+
+```bash
+export SCRAPYD_BIND_ADDRESS=0.0.0.0
+export SCRAPYD_HTTP_PORT=6800
+scrapyd
+```
+
+### SCRAPYD_BIND_ADDRESS
+
+Control which network interfaces Scrapyd listens on:
+
+```bash
+# Listen only on localhost (default, most secure)
+export SCRAPYD_BIND_ADDRESS=127.0.0.1
+scrapyd
+
+# Listen on all IPv4 interfaces
+export SCRAPYD_BIND_ADDRESS=0.0.0.0
+scrapyd
+
+# Listen on all IPv4 and IPv6 interfaces
+export SCRAPYD_BIND_ADDRESS=::0
+scrapyd
+
+# Disable TCP server (when using Unix socket)
+export SCRAPYD_BIND_ADDRESS=""
+export SCRAPYD_UNIX_SOCKET_PATH=/var/run/scrapyd/web.socket
+scrapyd
+```
+
+<Warning>
+  Be careful when setting `SCRAPYD_BIND_ADDRESS=0.0.0.0` as it exposes Scrapyd to all network interfaces. Always use authentication when accepting external connections.
+</Warning>
+
+### SCRAPYD_HTTP_PORT
+
+Change the port Scrapyd listens on:
+
+```bash
+# Use a different port
+export SCRAPYD_HTTP_PORT=8080
+scrapyd
+
+# Access at http://localhost:8080
+curl http://localhost:8080/daemonstatus.json
+```
+
+### SCRAPYD_USERNAME and SCRAPYD_PASSWORD
+
+Enable authentication without storing credentials in configuration files:
+
+```bash
+export SCRAPYD_USERNAME=admin
+export SCRAPYD_PASSWORD=secretpassword
+scrapyd
+```
+
+This is more secure than configuration files as environment variables:
+- Don't get committed to version control
+- Can be managed by secrets management systems
+- Can be different per deployment environment
+
+<Tip>
+  Use environment variables for credentials in production deployments. See [Authentication](/configuration/authentication) for more details.
+</Tip>
+
+### SCRAPYD_UNIX_SOCKET_PATH
+
+Use a Unix socket for local-only access:
+
+```bash
+# Use Unix socket with TCP disabled
+export SCRAPYD_BIND_ADDRESS=""
+export SCRAPYD_UNIX_SOCKET_PATH=/var/run/scrapyd/web.socket
+scrapyd
+
+# Access using curl with --unix-socket
+curl --unix-socket /var/run/scrapyd/web.socket http://localhost/daemonstatus.json
+```
+
+## Integration Examples
+
+### Docker
+
+Pass environment variables to Docker containers:
+
+```bash
+docker run -d \
+  -e SCRAPYD_BIND_ADDRESS=0.0.0.0 \
+  -e SCRAPYD_HTTP_PORT=6800 \
+  -e SCRAPYD_USERNAME=admin \
+  -e SCRAPYD_PASSWORD=secretpassword \
+  -p 6800:6800 \
+  scrapyd
+```
+
+Or use an environment file:
+
+```bash
+# .env file
+SCRAPYD_BIND_ADDRESS=0.0.0.0
+SCRAPYD_HTTP_PORT=6800
+SCRAPYD_USERNAME=admin
+SCRAPYD_PASSWORD=secretpassword
+```
+
+```bash
+docker run -d --env-file .env -p 6800:6800 scrapyd
+```
+
+### Docker Compose
+
+```yaml docker-compose.yml
+version: '3.8'
+
+services:
+  scrapyd:
+    image: scrapyd
+    ports:
+      - "6800:6800"
+    environment:
+      SCRAPYD_BIND_ADDRESS: 0.0.0.0
+      SCRAPYD_HTTP_PORT: 6800
+      SCRAPYD_USERNAME: admin
+      SCRAPYD_PASSWORD: ${SCRAPYD_PASSWORD}  # from host environment
+```
+
+### systemd Service
+
+Configure environment variables in a systemd service file:
+
+```ini /etc/systemd/system/scrapyd.service
+[Unit]
+Description=Scrapyd daemon
+After=network.target
+
+[Service]
+Type=simple
+User=scrapyd
+Group=scrapyd
+Environment="SCRAPYD_BIND_ADDRESS=127.0.0.1"
+Environment="SCRAPYD_HTTP_PORT=6800"
+Environment="SCRAPYD_USERNAME=admin"
+Environment="SCRAPYD_PASSWORD=secretpassword"
+ExecStart=/usr/local/bin/scrapyd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Or use an environment file:
+
+```ini /etc/systemd/system/scrapyd.service
+[Unit]
+Description=Scrapyd daemon
+After=network.target
+
+[Service]
+Type=simple
+User=scrapyd
+Group=scrapyd
+EnvironmentFile=/etc/scrapyd/environment
+ExecStart=/usr/local/bin/scrapyd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash /etc/scrapyd/environment
+SCRAPYD_BIND_ADDRESS=127.0.0.1
+SCRAPYD_HTTP_PORT=6800
+SCRAPYD_USERNAME=admin
+SCRAPYD_PASSWORD=secretpassword
+```
+
+### Kubernetes
+
+Use ConfigMaps and Secrets in Kubernetes:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: scrapyd-credentials
+type: Opaque
+stringData:
+  username: admin
+  password: secretpassword
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scrapyd-config
+data:
+  bind_address: "0.0.0.0"
+  http_port: "6800"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapyd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scrapyd
+  template:
+    metadata:
+      labels:
+        app: scrapyd
+    spec:
+      containers:
+      - name: scrapyd
+        image: scrapyd:latest
+        ports:
+        - containerPort: 6800
+        env:
+        - name: SCRAPYD_BIND_ADDRESS
+          valueFrom:
+            configMapKeyRef:
+              name: scrapyd-config
+              key: bind_address
+        - name: SCRAPYD_HTTP_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: scrapyd-config
+              key: http_port
+        - name: SCRAPYD_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: scrapyd-credentials
+              key: username
+        - name: SCRAPYD_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: scrapyd-credentials
+              key: password
+```
+
+## Implementation Details
+
+Environment variables are read in `scrapyd/app.py:20-22` and `scrapyd/basicauth.py:44-45`:
+
+```python
+# scrapyd/app.py
+def application(config):
+    app = Application("Scrapyd")
+    bind_address = os.getenv("SCRAPYD_BIND_ADDRESS") or config.get("bind_address", "127.0.0.1")
+    http_port = int(os.getenv("SCRAPYD_HTTP_PORT") or config.getint("http_port", "6800"))
+    unix_socket_path = os.getenv("SCRAPYD_UNIX_SOCKET_PATH") or config.get("unix_socket_path", "")
+    # ...
+```
+
+```python
+# scrapyd/basicauth.py
+def wrap_resource(resource, config):
+    username = os.getenv("SCRAPYD_USERNAME") or config.get("username", "")
+    password = os.getenv("SCRAPYD_PASSWORD") or config.get("password", "")
+    # ...
+```
+
+The pattern is consistent:
+1. Check environment variable first using `os.getenv()`
+2. Fall back to configuration file value if environment variable is not set
+3. Use default value if neither is set
+
+## Common Use Cases
+
+### Development vs Production
+
+Use configuration files for development and environment variables for production:
+
+```bash
+# Development: use scrapyd.conf
+scrapyd
+
+# Production: override with environment variables
+export SCRAPYD_BIND_ADDRESS=0.0.0.0
+export SCRAPYD_USERNAME=admin
+export SCRAPYD_PASSWORD=$(cat /run/secrets/scrapyd_password)
+scrapyd
+```
+
+### Multi-Instance Deployment
+
+Run multiple Scrapyd instances on different ports:
+
+```bash
+# Instance 1
+SCRAPYD_HTTP_PORT=6801 scrapyd &
+
+# Instance 2
+SCRAPYD_HTTP_PORT=6802 scrapyd &
+
+# Instance 3
+SCRAPYD_HTTP_PORT=6803 scrapyd &
+```
+
+### Cloud Deployments
+
+Use cloud provider secrets management:
+
+```bash
+# AWS with Secrets Manager
+export SCRAPYD_PASSWORD=$(aws secretsmanager get-secret-value \
+  --secret-id scrapyd/password \
+  --query SecretString \
+  --output text)
+
+# Azure with Key Vault
+export SCRAPYD_PASSWORD=$(az keyvault secret show \
+  --vault-name my-vault \
+  --name scrapyd-password \
+  --query value \
+  --output tsv)
+
+# Google Cloud with Secret Manager
+export SCRAPYD_PASSWORD=$(gcloud secrets versions access latest \
+  --secret="scrapyd-password")
+
+scrapyd
+```
+
+## Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="Never log environment variables">
+    Environment variables may contain sensitive information. Avoid logging them:
+    
+    ```bash
+    # Bad: exposes password in logs
+    echo "Starting with password: $SCRAPYD_PASSWORD"
+    
+    # Good: don't log sensitive values
+    echo "Starting Scrapyd with authentication enabled"
+    ```
+  </Accordion>
+  
+  <Accordion title="Use secrets management systems">
+    Don't hardcode secrets in deployment scripts:
+    
+    ```bash
+    # Bad: password in script
+    export SCRAPYD_PASSWORD=secretpassword
+    
+    # Good: read from secrets manager
+    export SCRAPYD_PASSWORD=$(read_from_secrets_manager)
+    ```
+  </Accordion>
+  
+  <Accordion title="Limit environment variable scope">
+    Set environment variables only for the Scrapyd process:
+    
+    ```bash
+    # Subprocess only (recommended)
+    SCRAPYD_PASSWORD=secret scrapyd
+    
+    # vs. global export (not recommended)
+    export SCRAPYD_PASSWORD=secret
+    scrapyd
+    ```
+  </Accordion>
+  
+  <Accordion title="Validate environment variables">
+    Check that required variables are set before starting:
+    
+    ```bash
+    #!/bin/bash
+    if [ -z "$SCRAPYD_USERNAME" ] || [ -z "$SCRAPYD_PASSWORD" ]; then
+        echo "Error: SCRAPYD_USERNAME and SCRAPYD_PASSWORD must be set"
+        exit 1
+    fi
+    scrapyd
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### Environment Variable Not Taking Effect
+
+Verify the variable is set in the Scrapyd process environment:
+
+```bash
+# Start Scrapyd in the background
+SCRAPYD_HTTP_PORT=8080 scrapyd &
+SCRAPYD_PID=$!
+
+# Check environment
+cat /proc/$SCRAPYD_PID/environ | tr '\0' '\n' | grep SCRAPYD
+```
+
+### Empty String Values
+
+Be careful with empty strings - they override configuration file values:
+
+```bash
+# This DISABLES the TCP server because bind_address becomes empty
+export SCRAPYD_BIND_ADDRESS=""
+scrapyd
+```
+
+To unset an environment variable:
+
+```bash
+unset SCRAPYD_BIND_ADDRESS
+```
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Settings Reference" icon="list" href="/configuration/settings-reference">
+    Complete list of all configuration settings
+  </Card>
+  
+  <Card title="Authentication" icon="lock" href="/configuration/authentication">
+    Using SCRAPYD_USERNAME and SCRAPYD_PASSWORD
+  </Card>
+  
+  <Card title="Configuration Overview" icon="gear" href="/configuration/overview">
+    Understanding configuration precedence
+  </Card>
+</CardGroup>

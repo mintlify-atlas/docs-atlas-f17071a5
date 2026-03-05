@@ -1,0 +1,266 @@
+---
+title: 'delproject.json'
+description: 'Delete a project and all its versions'
+---
+
+## Overview
+
+Delete a project and all its versions from egg storage.
+
+<Warning>
+  This operation is irreversible. All versions of the project will be permanently deleted.
+</Warning>
+
+## HTTP Method
+
+```
+POST /delproject.json
+```
+
+## Parameters
+
+<ParamField path="project" type="string" required>
+  The project name to delete
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success, `"error"` on failure
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+## Examples
+
+### Delete a Project
+
+```bash
+curl http://localhost:6800/delproject.json -d project=myproject
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename"
+}
+```
+
+### With Authentication
+
+```bash
+curl -u username:password http://localhost:6800/delproject.json \
+  -d project=myproject
+```
+
+## Error Cases
+
+### Project Not Found
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "project 'myproject' not found"
+}
+```
+
+### Missing Required Parameter
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "'project' parameter is required"
+}
+```
+
+## What Gets Deleted
+
+When you delete a project:
+
+1. All egg files (all versions) are removed from egg storage
+2. The project is removed from the project list
+3. The spider cache for the project is cleared
+4. Spider queues are removed
+
+<Info>
+  Running and pending jobs are **not** automatically canceled. If you have active jobs, cancel them first using [cancel.json](/api/cancel).
+</Info>
+
+## Use Cases
+
+### Delete Old Projects
+
+```bash
+#!/bin/bash
+
+PROJECTS_TO_DELETE=("old-project" "test-project" "deprecated-project")
+
+for project in "${PROJECTS_TO_DELETE[@]}"; do
+  echo "Deleting $project..."
+  curl http://localhost:6800/delproject.json -d project=$project
+done
+```
+
+### Delete with Confirmation
+
+```python
+import requests
+
+def delete_project(project):
+    # Check if project exists
+    response = requests.get("http://localhost:6800/listprojects.json")
+    projects = response.json()['projects']
+    
+    if project not in projects:
+        print(f"Project '{project}' does not exist")
+        return
+    
+    # Get versions
+    versions_response = requests.get(
+        f"http://localhost:6800/listversions.json?project={project}"
+    )
+    versions = versions_response.json()['versions']
+    
+    print(f"Project: {project}")
+    print(f"Versions: {len(versions)}")
+    print(f"Version list: {', '.join(versions)}")
+    
+    confirm = input(f"Delete project '{project}'? (yes/no): ")
+    if confirm.lower() != 'yes':
+        print("Cancelled")
+        return
+    
+    # Delete project
+    delete_response = requests.post(
+        "http://localhost:6800/delproject.json",
+        data={"project": project}
+    )
+    
+    if delete_response.json()['status'] == 'ok':
+        print(f"✓ Project '{project}' deleted successfully")
+    else:
+        print(f"✗ Failed: {delete_response.json()['message']}")
+
+delete_project("myproject")
+```
+
+### Cancel Jobs Before Deleting
+
+```python
+import requests
+import time
+
+def delete_project_safely(project):
+    # Get all jobs
+    jobs_response = requests.get(
+        f"http://localhost:6800/listjobs.json?project={project}"
+    )
+    
+    if jobs_response.json()['status'] == 'error':
+        print(f"Project not found: {project}")
+        return
+    
+    jobs = jobs_response.json()
+    
+    # Cancel pending jobs
+    for job in jobs['pending']:
+        requests.post(
+            "http://localhost:6800/cancel.json",
+            data={"project": project, "job": job['id']}
+        )
+        print(f"Cancelled pending job: {job['id']}")
+    
+    # Cancel running jobs
+    for job in jobs['running']:
+        requests.post(
+            "http://localhost:6800/cancel.json",
+            data={"project": project, "job": job['id']}
+        )
+        print(f"Cancelled running job: {job['id']}")
+    
+    # Wait for jobs to terminate
+    if jobs['running']:
+        print("Waiting for jobs to terminate...")
+        time.sleep(5)
+    
+    # Delete project
+    delete_response = requests.post(
+        "http://localhost:6800/delproject.json",
+        data={"project": project}
+    )
+    
+    if delete_response.json()['status'] == 'ok':
+        print(f"✓ Project '{project}' deleted")
+    else:
+        print(f"✗ Failed: {delete_response.json()['message']}")
+
+delete_project_safely("myproject")
+```
+
+### Cleanup Across Multiple Nodes
+
+```python
+import requests
+
+nodes = [
+    "http://node1:6800",
+    "http://node2:6800",
+    "http://node3:6800"
+]
+
+project = "deprecated-project"
+
+for node in nodes:
+    response = requests.post(
+        f"{node}/delproject.json",
+        data={"project": project}
+    )
+    
+    if response.json()['status'] == 'ok':
+        print(f"✓ {node}: Deleted {project}")
+    else:
+        message = response.json()['message']
+        if 'not found' in message:
+            print(f"○ {node}: Project not found (already deleted)")
+        else:
+            print(f"✗ {node}: {message}")
+```
+
+## Alternative: Delete Specific Versions
+
+If you want to keep the project but delete only some versions, use [delversion.json](/api/delete-version) instead:
+
+```bash
+# Delete a specific version
+curl http://localhost:6800/delversion.json \
+  -d project=myproject \
+  -d version=r99
+```
+
+## Notes
+
+<Warning>
+  This operation is permanent. Make sure you have backups of your egg files if you might need to redeploy the project later.
+</Warning>
+
+<Info>
+  After deleting a project, you can recreate it by uploading a new version using [addversion.json](/api/add-version).
+</Info>
+
+<Tip>
+  To delete only old versions while keeping recent ones, use [delversion.json](/api/delete-version) instead of deleting the entire project.
+</Tip>
+
+## Related Endpoints
+
+- [deleteversion.json](/api/delete-version) - Delete a specific version (keeps project)
+- [listprojects.json](/api/list-projects) - List all projects
+- [listversions.json](/api/list-versions) - List versions before deleting
+- [cancel.json](/api/cancel) - Cancel jobs before deleting
+- [addversion.json](/api/add-version) - Recreate a project

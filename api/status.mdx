@@ -1,0 +1,212 @@
+---
+title: 'status.json'
+description: 'Get the status of a specific job'
+---
+
+<Note>
+  Added in Scrapyd 1.5.0
+</Note>
+
+## Overview
+
+Get the current status of a job by its job ID.
+
+## HTTP Method
+
+```
+GET /status.json
+```
+
+## Parameters
+
+<ParamField query="job" type="string" required>
+  The job ID to check
+</ParamField>
+
+<ParamField query="project" type="string">
+  The project name (optional)
+  
+  If provided, only checks jobs within this project. If omitted, searches all projects.
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success, `"error"` on failure
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+<ResponseField name="currstate" type="string | null" required>
+  The current state of the job:
+  - `"pending"` - Job is in the queue, waiting to run
+  - `"running"` - Job is currently executing
+  - `"finished"` - Job has completed
+  - `null` - Job not found
+</ResponseField>
+
+## Examples
+
+### Check Job Status
+
+Check the status of a job across all projects:
+
+```bash
+curl http://localhost:6800/status.json?job=6487ec79947edab326d6db28a2d86511e8247444
+```
+
+**Response (running job):**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "currstate": "running"
+}
+```
+
+**Response (pending job):**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "currstate": "pending"
+}
+```
+
+**Response (finished job):**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "currstate": "finished"
+}
+```
+
+**Response (job not found):**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "currstate": null
+}
+```
+
+### Check Job Status in Specific Project
+
+Limit the search to a specific project:
+
+```bash
+curl "http://localhost:6800/status.json?job=6487ec79947edab326d6db28a2d86511e8247444&project=myproject"
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "currstate": "running"
+}
+```
+
+## Error Cases
+
+### Project Not Found
+
+If the specified project doesn't exist:
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "project 'myproject' not found"
+}
+```
+
+### Missing Required Parameter
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "'job' parameter is required"
+}
+```
+
+## Notes
+
+<Info>
+  When `currstate` is `null`, the job ID was not found in any queue (pending, running, or finished). This could mean:
+  - The job never existed
+  - The job finished and was removed from storage (if using the default in-memory job storage)
+  - The job ID was mistyped
+</Info>
+
+<Warning>
+  The default job storage keeps finished jobs in memory only. When Scrapyd restarts, finished job history is lost. Use a persistent job storage implementation to retain history across restarts.
+</Warning>
+
+<Tip>
+  Omit the `project` parameter to search for a job across all projects if you're unsure which project it belongs to.
+</Tip>
+
+## Use Cases
+
+### Polling for Completion
+
+Check if a job has finished before downloading its results:
+
+```bash
+#!/bin/bash
+JOB_ID="6487ec79947edab326d6db28a2d86511e8247444"
+
+while true; do
+  STATE=$(curl -s "http://localhost:6800/status.json?job=$JOB_ID" | \
+    python -c "import sys, json; print(json.load(sys.stdin)['currstate'])")
+  
+  if [ "$STATE" = "finished" ] || [ "$STATE" = "null" ]; then
+    echo "Job completed"
+    break
+  fi
+  
+  echo "Job is $STATE, waiting..."
+  sleep 5
+done
+```
+
+### Monitoring Job Progress
+
+Combine with [listjobs.json](/api/list-jobs) to get detailed information:
+
+```python
+import requests
+import time
+
+job_id = "6487ec79947edab326d6db28a2d86511e8247444"
+
+while True:
+    response = requests.get(f"http://localhost:6800/status.json?job={job_id}")
+    state = response.json()["currstate"]
+    
+    if state == "finished":
+        print("Job completed!")
+        break
+    elif state is None:
+        print("Job not found")
+        break
+    
+    print(f"Current state: {state}")
+    time.sleep(5)
+```
+
+## Related Endpoints
+
+- [schedule.json](/api/schedule) - Schedule a new job
+- [cancel.json](/api/cancel) - Cancel a job
+- [listjobs.json](/api/list-jobs) - Get detailed information about all jobs

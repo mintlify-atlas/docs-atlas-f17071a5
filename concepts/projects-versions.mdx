@@ -1,0 +1,417 @@
+---
+title: Projects & Versions
+description: Managing Scrapy projects and their versions in Scrapyd
+---
+
+Scrapyd manages multiple Scrapy projects, each with multiple versions. Understanding how projects and versions work is essential for deploying and running spiders.
+
+## Projects
+
+A **project** in Scrapyd is a Scrapy application packaged as a Python egg file. Each project contains:
+
+- One or more spider classes
+- Project settings
+- Custom pipelines, middlewares, and extensions
+- Supporting code and resources
+
+### Listing Projects
+
+Scrapyd tracks all deployed projects. You can list them via the API:
+
+```bash
+curl http://localhost:6800/listprojects.json
+```
+
+```json
+{
+  "status": "ok",
+  "projects": ["myproject", "anotherproject"],
+  "node_name": "node-1"
+}
+```
+
+Projects are stored in the egg storage directory (default: `eggs/`):
+
+```
+eggs/
+├── myproject/
+│   ├── 1_0.egg
+│   ├── 1_1.egg
+│   └── 2_0_0.egg
+└── anotherproject/
+    └── 1_0.egg
+```
+
+## Versions
+
+Each project can have multiple **versions**, allowing you to:
+
+- Deploy new code without disrupting running spiders
+- Test new versions before making them default
+- Roll back to previous versions if needed
+- Run different versions simultaneously
+
+### Version Storage
+
+Versions are stored as egg files in the project directory. The `FilesystemEggStorage` component manages this:
+
+<CodeGroup>
+```python eggstorage.py:26-33
+def put(self, eggfile, project, version):
+    path = self._egg_path(project, version)
+
+    if not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    with path.open("wb") as f:
+        shutil.copyfileobj(eggfile, f)
+```
+
+```python eggstorage.py:69-71
+def _egg_path(self, project, version):
+    sanitized_version = re.sub(r"[^A-Za-z0-9_-]", "_", version)
+    return self._get_path(project, f"{sanitized_version}.egg")
+```
+</CodeGroup>
+
+Version names are sanitized by replacing non-alphanumeric characters (except `-` and `_`) with underscores.
+
+### Version Ordering
+
+The **latest version** is the alphabetically greatest, unless all version names are valid [version specifiers](https://packaging.python.org/en/latest/specifications/version-specifiers/) like `1.0` or `1.0rc1`, in which case they are sorted according to PEP 440.
+
+<CodeGroup>
+```python eggstorage.py:14-18
+def sorted_versions(versions):
+    try:
+        return sorted(versions, key=Version)
+    except InvalidVersion:
+        return sorted(versions)
+```
+</CodeGroup>
+
+<Tabs>
+  <Tab title="Semantic Versions">
+    If all versions follow semantic versioning:
+    
+    ```python
+    versions = ["1.0", "1.0rc1", "1.1", "2.0.0", "2.0.1"]
+    # Sorted: ["1.0rc1", "1.0", "1.1", "2.0.0", "2.0.1"]
+    # Latest: "2.0.1"
+    ```
+    
+    <Check>Recommended: Use semantic versioning for predictable ordering</Check>
+  </Tab>
+  
+  <Tab title="String Versions">
+    If any version is not a valid version specifier:
+    
+    ```python
+    versions = ["v1.0", "v1.1", "v2.0", "latest"]
+    # Sorted alphabetically: ["latest", "v1.0", "v1.1", "v2.0"]
+    # Latest: "v2.0"
+    ```
+    
+    <Warning>Alphabetical sorting can produce unexpected results</Warning>
+  </Tab>
+</Tabs>
+
+### Listing Versions
+
+To see all versions of a project:
+
+```bash
+curl http://localhost:6800/listversions.json?project=myproject
+```
+
+```json
+{
+  "status": "ok",
+  "versions": ["1.0", "1.1", "2.0.0"],
+  "node_name": "node-1"
+}
+```
+
+Versions are returned in order from oldest to newest, with the latest version last.
+
+## Deploying Versions
+
+Deploy a new project version using the `addversion.json` endpoint:
+
+```bash
+curl http://localhost:6800/addversion.json \
+  -F project=myproject \
+  -F version=2.1.0 \
+  -F egg=@dist/myproject-2.1.0-py3.11.egg
+```
+
+```json
+{
+  "status": "ok",
+  "project": "myproject",
+  "version": "2.1.0",
+  "spiders": 3,
+  "node_name": "node-1"
+}
+```
+
+<Steps>
+  <Step title="Build the egg">
+    Package your Scrapy project as an egg file:
+    ```bash
+    cd /path/to/myproject
+    python setup.py bdist_egg
+    ```
+  </Step>
+  
+  <Step title="Upload to Scrapyd">
+    Use the HTTP API to upload the egg:
+    ```bash
+    curl http://localhost:6800/addversion.json \
+      -F project=myproject \
+      -F version=2.1.0 \
+      -F egg=@dist/myproject-2.1.0-py3.11.egg
+    ```
+  </Step>
+  
+  <Step title="Verify deployment">
+    Check that the version was added:
+    ```bash
+    curl http://localhost:6800/listversions.json?project=myproject
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+Use [scrapyd-client](https://github.com/scrapy/scrapyd-client) for easier deployment:
+```bash
+scrapyd-deploy
+```
+</Tip>
+
+## Using Specific Versions
+
+By default, Scrapyd uses the **latest version** when scheduling spiders. You can override this with the `_version` parameter:
+
+```bash
+# Uses latest version (e.g., 2.1.0)
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=quotes
+
+# Uses specific version
+curl http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=quotes \
+  -d _version=1.0
+```
+
+### How Version Selection Works
+
+When a spider is scheduled, the version selection happens in the egg storage:
+
+```python eggstorage.py:35-44
+def get(self, project, version=None):
+    if version is None:
+        try:
+            version = self.list(project)[-1]  # Latest version
+        except IndexError:
+            return None, None
+    try:
+        return version, self._egg_path(project, version).open("rb")
+    except FileNotFoundError:
+        return None, None
+```
+
+The runner then activates this version:
+
+```python runner.py:40-41
+eggversion = os.environ.get("SCRAPYD_EGG_VERSION", None)
+sanitized_version, egg = eggstorage.get(project, eggversion)
+```
+
+## Deleting Versions
+
+Remove a specific version:
+
+```bash
+curl http://localhost:6800/deleteversion.json \
+  -d project=myproject \
+  -d version=1.0
+```
+
+Delete an entire project (all versions):
+
+```bash
+curl http://localhost:6800/deleteproject.json \
+  -d project=myproject
+```
+
+<Warning>
+Deleting a version removes the egg file immediately. Running jobs using that version will continue, but you cannot schedule new jobs with that version.
+</Warning>
+
+The deletion logic handles cleanup automatically:
+
+```python eggstorage.py:55-67
+def delete(self, project, version=None):
+    if version is None:
+        try:
+            shutil.rmtree(self._get_path(project))
+        except FileNotFoundError as e:
+            raise ProjectNotFoundError from e
+    else:
+        try:
+            self._egg_path(project, version).unlink()
+            if not self.list(project):  # remove project if no versions left
+                self.delete(project)
+        except FileNotFoundError as e:
+            raise EggNotFoundError from e
+```
+
+If you delete the last version of a project, the project directory is automatically removed.
+
+## Spider Cache
+
+Scrapyd caches the spider list for each project version to avoid repeatedly executing `scrapy list`:
+
+```python webservice.py:72-97
+def set(self, project, version, *, runner):
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "UTF-8"
+    env["SCRAPY_PROJECT"] = project
+    if version:
+        env["SCRAPYD_EGG_VERSION"] = version
+
+    args = [sys.executable, "-m", runner, "list", "-s", "LOG_STDOUT=0"]
+    process = Popen(args, stdout=PIPE, stderr=PIPE, env=env)
+    stdout, stderr = process.communicate()
+    if process.returncode:
+        raise RunnerError((stderr or stdout or b"").decode())
+
+    spiders = stdout.decode().splitlines()
+    
+    # Cache the result
+    self.cache[project].pop(None, None)
+    self.cache[project][version] = spiders
+    return spiders
+```
+
+The cache is invalidated when:
+- A new version is added
+- A version is deleted
+- The Scrapyd process restarts
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use semantic versioning">
+    Always use semantic version numbers (e.g., `1.0.0`, `1.1.0`, `2.0.0`) for predictable sorting:
+    
+    ```bash
+    # Good
+    scrapyd-deploy -p myproject --version 1.2.3
+    
+    # Avoid
+    scrapyd-deploy -p myproject --version v1.2.3
+    scrapyd-deploy -p myproject --version latest
+    ```
+  </Accordion>
+  
+  <Accordion title="Test before deploying to production">
+    Deploy new versions to a staging Scrapyd instance first:
+    
+    ```bash
+    # Deploy to staging
+    scrapyd-deploy staging --version 1.2.0
+    
+    # Test
+    curl http://staging:6800/schedule.json -d project=myproject -d spider=test
+    
+    # Deploy to production
+    scrapyd-deploy production --version 1.2.0
+    ```
+  </Accordion>
+  
+  <Accordion title="Keep old versions for rollback">
+    Don't delete old versions immediately. Keep at least the last 2-3 versions:
+    
+    ```bash
+    # Current versions: 1.0.0, 1.1.0, 1.2.0, 1.3.0
+    # Deploy new version
+    scrapyd-deploy --version 1.4.0
+    
+    # Delete oldest version only
+    curl http://localhost:6800/deleteversion.json \
+      -d project=myproject \
+      -d version=1.0.0
+    ```
+  </Accordion>
+  
+  <Accordion title="Use version pinning for critical jobs">
+    For production jobs that must be stable, always specify the version:
+    
+    ```bash
+    # Production job - pin to tested version
+    curl http://localhost:6800/schedule.json \
+      -d project=myproject \
+      -d spider=critical_spider \
+      -d _version=1.3.0
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Advanced: Custom Egg Storage
+
+You can implement custom egg storage (e.g., S3, database) by implementing the `IEggStorage` interface:
+
+```python
+from zope.interface import implementer
+from scrapyd.interfaces import IEggStorage
+
+@implementer(IEggStorage)
+class S3EggStorage:
+    def put(self, eggfile, project, version):
+        # Upload to S3
+        pass
+    
+    def get(self, project, version=None):
+        # Download from S3
+        pass
+    
+    def list(self, project):
+        # List versions from S3
+        pass
+    
+    def list_projects(self):
+        # List projects from S3
+        pass
+    
+    def delete(self, project, version=None):
+        # Delete from S3
+        pass
+```
+
+Configure Scrapyd to use your implementation:
+
+```ini
+[scrapyd]
+eggstorage = mymodule.S3EggStorage
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Jobs & Scheduling" icon="clock" href="/concepts/jobs-scheduling">
+    Learn about job lifecycle and priority queues
+  </Card>
+  <Card title="Deploying Projects" icon="upload" href="/operations/deploying-projects">
+    Step-by-step deployment guide
+  </Card>
+  <Card title="Add Version API" icon="code" href="/api/add-version">
+    API reference for deploying versions
+  </Card>
+  <Card title="List Versions API" icon="list" href="/api/list-versions">
+    API reference for listing versions
+  </Card>
+</CardGroup>

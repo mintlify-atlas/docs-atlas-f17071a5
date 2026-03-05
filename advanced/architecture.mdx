@@ -1,0 +1,258 @@
+---
+title: Architecture
+description: Understanding Scrapyd's architecture and component design
+---
+
+Scrapyd is built on the [Twisted Application Framework](https://docs.twisted.org/en/stable/core/howto/application.html), a powerful asynchronous networking framework. This architecture enables Scrapyd to efficiently manage multiple concurrent spider processes.
+
+## Twisted Application Framework
+
+Scrapyd uses Twisted's `Application` service hierarchy to organize its components. The main application is initialized in `scrapyd/app.py:18`:
+
+```python
+def application(config):
+    app = Application("Scrapyd")
+    bind_address = os.getenv("SCRAPYD_BIND_ADDRESS") or config.get("bind_address", "127.0.0.1")
+    http_port = int(os.getenv("SCRAPYD_HTTP_PORT") or config.getint("http_port", "6800"))
+    unix_socket_path = os.getenv("SCRAPYD_UNIX_SOCKET_PATH") or config.get("unix_socket_path", "")
+    poll_interval = config.getfloat("poll_interval", 5)
+```
+
+The application registers components using Zope interfaces and assembles three main services:
+
+1. **Launcher** - Manages spider process execution
+2. **TimerService** - Polls for pending jobs at regular intervals
+3. **Web Service** - Provides HTTP API (TCP or Unix socket)
+
+## Core Components
+
+### app.py - Application Initialization
+
+The `application()` function in `scrapyd/app.py:18` orchestrates the entire system:
+
+```python
+# Initialize components
+environment = Environment(config)
+scheduler = SpiderScheduler(config)
+poller = initialize_component(config, "poller", "scrapyd.poller.QueuePoller")
+jobstorage = initialize_component(config, "jobstorage", "scrapyd.jobstorage.MemoryJobStorage")
+eggstorage = initialize_component(config, "eggstorage", "scrapyd.eggstorage.FilesystemEggStorage")
+
+# Register components with the application
+app.setComponent(IEnvironment, environment)
+app.setComponent(ISpiderScheduler, scheduler)
+app.setComponent(IPoller, poller)
+app.setComponent(IJobStorage, jobstorage)
+app.setComponent(IEggStorage, eggstorage)
+```
+
+Components are registered with their respective interfaces, allowing for dependency injection and customization.
+
+### launcher.py - Process Management
+
+The `Launcher` service (`scrapyd/launcher.py:31`) manages spider process execution with a slot-based system:
+
+```python
+class Launcher(Service):
+    name = "launcher"
+
+    def __init__(self, config, app):
+        self.processes = {}  # slot -> ScrapyProcessProtocol
+        self.finished = app.getComponent(IJobStorage)
+        self.max_proc = self._get_max_proc(config)
+        self.runner = config.get("runner", "scrapyd.runner")
+        self.app = app
+```
+
+**Key responsibilities:**
+
+- Maintains a pool of process slots (default: CPU count × 4)
+- Spawns Scrapy processes using `reactor.spawnProcess()`
+- Tracks running jobs via `ScrapyProcessProtocol`
+- Records finished jobs in `IJobStorage`
+
+The launcher determines maximum concurrent processes in `scrapyd/launcher.py:85`:
+
+```python
+def _get_max_proc(self, config):
+    max_proc = config.getint("max_proc", 0)
+    if max_proc:
+        return max_proc
+    
+    try:
+        cpus = multiprocessing.cpu_count()
+    except NotImplementedError:
+        cpus = 1
+    return cpus * config.getint("max_proc_per_cpu", 4)
+```
+
+### poller.py - Job Queue Polling
+
+The `QueuePoller` (`scrapyd/poller.py:8`) checks for pending jobs and assigns them to available slots:
+
+```python
+@implementer(IPoller)
+class QueuePoller:
+    def __init__(self, config):
+        self.config = config
+        self.update_projects()
+        self.dq = DeferredQueue()  # Waiting backlog for available slots
+
+    @inlineCallbacks
+    def poll(self):
+        for project, queue in self.queues.items():
+            while (yield maybeDeferred(queue.count)):
+                if not self.dq.waiting:  # No available slots
+                    return
+                message = (yield maybeDeferred(queue.pop)).copy()
+                if message is not None:
+                    message["_project"] = project
+                    message["_spider"] = message.pop("name")
+                    self.dq.put(message)  # Fire callbacks
+```
+
+**How it works:**
+
+1. Called every `poll_interval` seconds (default: 5)
+2. Iterates through all project queues
+3. Checks if slots are available (`self.dq.waiting`)
+4. Pops jobs from queues and fires callbacks to launch them
+
+### scheduler.py - Job Scheduling
+
+The `SpiderScheduler` (`scrapyd/scheduler.py:7`) handles job scheduling:
+
+```python
+@implementer(ISpiderScheduler)
+class SpiderScheduler:
+    def __init__(self, config):
+        self.config = config
+        self.update_projects()
+
+    def schedule(self, project, spider_name, priority=0.0, **spider_args):
+        self.queues[project].add(spider_name, priority=priority, **spider_args)
+```
+
+This component is used by the `schedule.json` webservice to add jobs to project queues.
+
+## Request Flow
+
+Here's how a spider execution request flows through the system:
+
+<Steps>
+  <Step title="Schedule Request">
+    User calls `/schedule.json` with project name and spider name
+  </Step>
+  
+  <Step title="Add to Queue">
+    `SpiderScheduler.schedule()` adds the job to the project's `ISpiderQueue`
+  </Step>
+  
+  <Step title="Poll for Jobs">
+    `TimerService` calls `QueuePoller.poll()` every `poll_interval` seconds
+  </Step>
+  
+  <Step title="Check Capacity">
+    Poller checks if there are available process slots (`Launcher` registered callbacks)
+  </Step>
+  
+  <Step title="Pop from Queue">
+    Poller pops the highest priority job from the queue
+  </Step>
+  
+  <Step title="Prepare Environment">
+    Launcher gets settings and environment variables from `IEnvironment`
+  </Step>
+  
+  <Step title="Spawn Process">
+    Launcher spawns a Scrapy process using `reactor.spawnProcess()`
+  </Step>
+  
+  <Step title="Monitor Process">
+    `ScrapyProcessProtocol` tracks the process lifecycle
+  </Step>
+  
+  <Step title="Record Completion">
+    When process ends, launcher adds it to `IJobStorage` and frees the slot
+  </Step>
+</Steps>
+
+## Component Communication
+
+Components communicate through:
+
+1. **Zope Interfaces** - Define contracts between components
+2. **Application Registry** - `app.getComponent(Interface)` retrieves registered implementations
+3. **Twisted Deferreds** - Handle asynchronous operations
+4. **DeferredQueue** - Coordinates slot availability between poller and launcher
+
+Example from `scrapyd/launcher.py:52`:
+
+```python
+def _get_message(self, slot):
+    poller = self.app.getComponent(IPoller)
+    poller.next().addCallback(self._spawn_process, slot)
+```
+
+The launcher retrieves the poller component and registers a callback that fires when a job is available.
+
+## Process Spawning
+
+Scrapyd spawns Scrapy processes using the runner module (`scrapyd/launcher.py:64`):
+
+```python
+def _spawn_process(self, message, slot):
+    project = message["_project"]
+    environment = self.app.getComponent(IEnvironment)
+    message.setdefault("settings", {})
+    message["settings"].update(environment.get_settings(message))
+
+    env = environment.get_environment(message, slot)
+    args = [sys.executable, "-m", self.runner, "crawl", *get_crawl_args(message)]
+
+    process = ScrapyProcessProtocol(project, message["_spider"], message["_job"], env, args)
+    process.deferred.addBoth(self._process_finished, slot)
+
+    reactor.spawnProcess(process, sys.executable, args=args, env=env)
+    self.processes[slot] = process
+```
+
+The spawned process runs: `python -m scrapyd.runner crawl <spider> [args]`
+
+## Configuration System
+
+Scrapyd uses a hierarchical configuration system (`scrapyd/config.py:8`):
+
+```python
+self.cp.read(
+    [
+        "/etc/scrapyd/scrapyd.conf",
+        "c:\\scrapyd\\scrapyd.conf",
+        *sorted(Path("/etc/scrapyd/conf.d").glob("*")),
+        "scrapyd.conf",
+        Path.home() / ".scrapyd.conf",
+        closest_scrapy_cfg(),
+        *extra_sources,
+    ]
+)
+```
+
+Configuration files are read in order, with later files overriding earlier ones.
+
+## Service Lifecycle
+
+When Scrapyd starts (`scrapyd/launcher.py:41`):
+
+```python
+def startService(self):
+    log.info(
+        "Scrapyd {version} started: max_proc={max_proc!r}, runner={runner!r}",
+        version=__version__,
+        max_proc=self.max_proc,
+        runner=self.runner,
+    )
+    for slot in range(self.max_proc):
+        self._get_message(slot)  # Register callback for each slot
+```
+
+Each process slot registers a callback with the poller, creating the initial "waiting" backlog that enables job execution.

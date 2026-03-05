@@ -1,80 +1,471 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Deploy your first Scrapy spider to Scrapyd and start scraping in minutes
 ---
 
-## Get started in three steps
+This guide walks you through the complete workflow of deploying and running a Scrapy spider using Scrapyd.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+- Python 3.10 or higher installed
+- Scrapyd installed (see [Installation](/installation))
+- A Scrapy project ready to deploy
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+## Step 1: Start Scrapyd
+
+<Steps>
+  <Step title="Launch the Scrapyd daemon">
+    Open a terminal and run:
+    ```bash
+    scrapyd
+    ```
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+    Expected output:
+    ```
+    2026-03-05T10:00:00-0500 [-] Scrapyd web console available at http://127.0.0.1:6800/
+    ```
+  </Step>
+  
+  <Step title="Verify Scrapyd is running">
+    Open your browser and navigate to:
+    ```
+    http://localhost:6800
+    ```
+    You should see the Scrapyd web interface showing available projects and jobs.
+  </Step>
+</Steps>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+By default, Scrapyd runs on `http://127.0.0.1:6800`. You can configure the bind address and port in the configuration file (see [Configuration](/configuration)).
 </Note>
+
+## Step 2: Prepare Your Scrapy Project
+
+If you don't have a Scrapy project yet, create a simple one:
+
+```bash
+# Create a new Scrapy project
+scrapy startproject myproject
+cd myproject
+
+# Create a spider
+scrapy genspider example example.com
+```
+
+Your project structure should look like:
+```
+myproject/
+├── scrapy.cfg
+└── myproject/
+    ├── __init__.py
+    ├── items.py
+    ├── middlewares.py
+    ├── pipelines.py
+    ├── settings.py
+    └── spiders/
+        ├── __init__.py
+        └── example.py
+```
+
+### Configure Deployment
+
+Edit `scrapy.cfg` in your project root:
+
+```ini scrapy.cfg
+[settings]
+default = myproject.settings
+
+[deploy]
+url = http://localhost:6800/
+project = myproject
+```
+
+## Step 3: Deploy Your Project
+
+### Package Your Project
+
+Create a Python egg file from your Scrapy project:
+
+```bash
+# From your project directory
+python setup.py bdist_egg
+```
+
+<Warning>
+If you don't have a `setup.py` file, create one with the following content:
+
+```python setup.py
+from setuptools import setup, find_packages
+
+setup(
+    name='myproject',
+    version='1.0',
+    packages=find_packages(),
+    entry_points={'scrapy': ['settings = myproject.settings']},
+)
+```
+</Warning>
+
+### Upload to Scrapyd
+
+Use the `addversion.json` API endpoint to deploy:
+
+```bash
+curl http://localhost:6800/addversion.json \
+  -F project=myproject \
+  -F version=1.0 \
+  -F egg=@dist/myproject-1.0-py3.12.egg
+```
+
+Expected response:
+```json
+{
+  "status": "ok",
+  "project": "myproject",
+  "version": "1.0",
+  "spiders": 1,
+  "node_name": "node-name"
+}
+```
+
+<Note>
+The `spiders` field indicates how many spiders were detected in your project. Scrapyd runs `scrapy list` internally to discover spiders.
+</Note>
+
+## Step 4: List Available Projects and Spiders
+
+### List Projects
+
+```bash
+curl http://localhost:6800/listprojects.json
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "projects": ["myproject"],
+  "node_name": "node-name"
+}
+```
+
+### List Spiders
+
+```bash
+curl http://localhost:6800/listspiders.json?project=myproject
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "spiders": ["example"],
+  "node_name": "node-name"
+}
+```
+
+## Step 5: Schedule a Spider
+
+<Steps>
+  <Step title="Schedule a job">
+    Use the `schedule.json` endpoint:
+    ```bash
+    curl http://localhost:6800/schedule.json \
+      -d project=myproject \
+      -d spider=example
+    ```
+    
+    Response:
+    ```json
+    {
+      "status": "ok",
+      "jobid": "6487ec79947edab326d6db28a2d86511e8247444",
+      "node_name": "node-name"
+    }
+    ```
+  </Step>
+  
+  <Step title="Schedule with custom settings">
+    You can pass Scrapy settings and spider arguments:
+    ```bash
+    curl http://localhost:6800/schedule.json \
+      -d project=myproject \
+      -d spider=example \
+      -d setting=DOWNLOAD_DELAY=2 \
+      -d url=http://example.com
+    ```
+  </Step>
+  
+  <Step title="Schedule with priority">
+    Control job priority (higher values = higher priority):
+    ```bash
+    curl http://localhost:6800/schedule.json \
+      -d project=myproject \
+      -d spider=example \
+      -d priority=1.0
+    ```
+  </Step>
+</Steps>
+
+<Note>
+**Job ID Format:** Scrapyd generates job IDs using `uuid.uuid1().hex`, which creates a unique 32-character hexadecimal string. You can provide a custom `jobid` parameter if needed.
+</Note>
+
+## Step 6: Monitor Jobs
+
+### Check Job Status
+
+```bash
+curl "http://localhost:6800/status.json?job=6487ec79947edab326d6db28a2d86511e8247444"
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "currstate": "running",
+  "node_name": "node-name"
+}
+```
+
+Possible states: `pending`, `running`, `finished`, or `null` (not found)
+
+### List All Jobs
+
+```bash
+curl http://localhost:6800/listjobs.json?project=myproject
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "pending": [],
+  "running": [
+    {
+      "id": "6487ec79947edab326d6db28a2d86511e8247444",
+      "project": "myproject",
+      "spider": "example",
+      "pid": 12345,
+      "start_time": "2026-03-05 10:30:00.123456",
+      "log_url": "/logs/myproject/example/6487ec79947edab326d6db28a2d86511e8247444.log",
+      "items_url": "/items/myproject/example/6487ec79947edab326d6db28a2d86511e8247444.jl"
+    }
+  ],
+  "finished": [],
+  "node_name": "node-name"
+}
+```
+
+### Check Daemon Status
+
+```bash
+curl http://localhost:6800/daemonstatus.json
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "pending": 0,
+  "running": 1,
+  "finished": 5,
+  "node_name": "node-name"
+}
+```
+
+## Step 7: View Logs and Results
+
+### Access Spider Logs
+
+Logs are stored in the `logs/` directory (configurable via `logs_dir` setting):
+
+```bash
+# View log file
+tail -f logs/myproject/example/6487ec79947edab326d6db28a2d86511e8247444.log
+```
+
+Or access via the web interface:
+```
+http://localhost:6800/logs/myproject/example/6487ec79947edab326d6db28a2d86511e8247444.log
+```
+
+### Access Scraped Items
+
+If `items_dir` is configured, items are stored in JSON Lines format:
+```
+http://localhost:6800/items/myproject/example/6487ec79947edab326d6db28a2d86511e8247444.jl
+```
+
+## Step 8: Cancel a Job (Optional)
+
+To cancel a running or pending job:
+
+```bash
+curl http://localhost:6800/cancel.json \
+  -d project=myproject \
+  -d job=6487ec79947edab326d6db28a2d86511e8247444
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "prevstate": "running",
+  "node_name": "node-name"
+}
+```
+
+<Note>
+**Signal Handling:**
+- On Linux/macOS: Jobs are canceled using SIGINT
+- On Windows: Jobs are canceled using SIGBREAK (signal 21)
+- You can specify a custom signal: `-d signal=TERM`
+</Note>
+
+## Troubleshooting
+
+### Spider Not Found
+
+**Error:**
+```json
+{"status": "error", "message": "spider 'myspider' not found"}
+```
+
+**Solution:**
+- Verify spider name with `curl http://localhost:6800/listspiders.json?project=myproject`
+- Ensure your spider is properly defined in the project
+- Redeploy your project with `addversion.json`
+
+### Project Not Found
+
+**Error:**
+```json
+{"status": "error", "message": "project 'myproject' not found"}
+```
+
+**Solution:**
+- Check deployed projects: `curl http://localhost:6800/listprojects.json`
+- Verify the egg was uploaded successfully
+- Check Scrapyd logs for deployment errors
+
+### Egg Upload Fails
+
+**Error:**
+```json
+{"status": "error", "message": "egg is not a ZIP file (if using curl, use egg=@path not egg=path)"}
+```
+
+**Solution:**
+- Use `@` prefix in curl: `-F egg=@dist/myproject-1.0.egg`
+- Verify the egg file exists and is a valid ZIP archive:
+  ```bash
+  file dist/myproject-1.0.egg
+  unzip -t dist/myproject-1.0.egg
+  ```
+
+### Connection Refused
+
+**Error:**
+```
+curl: (7) Failed to connect to localhost port 6800: Connection refused
+```
+
+**Solution:**
+- Ensure Scrapyd is running: `ps aux | grep scrapyd`
+- Check bind address in configuration (default: `127.0.0.1:6800`)
+- Verify no firewall is blocking port 6800
+
+## Configuration Tips
+
+### Increase Concurrent Jobs
+
+By default, Scrapyd runs up to 4 processes per CPU core. Edit your configuration:
+
+```ini scrapyd.conf
+[scrapyd]
+max_proc_per_cpu = 8
+```
+
+### Change HTTP Port
+
+```ini scrapyd.conf
+[scrapyd]
+http_port = 8080
+```
+
+### Keep More Finished Jobs
+
+```ini scrapyd.conf
+[scrapyd]
+finished_to_keep = 200
+```
+
+See the [Configuration](/configuration) page for all available settings.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="book" href="/api/overview">
+    Explore all available API endpoints
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Learn about configuration options
+  </Card>
+  <Card title="Deploying Projects" icon="upload" href="/operations/deploying-projects">
+    Advanced deployment strategies
+  </Card>
+  <Card title="Web UI" icon="browser" href="/operations/monitoring">
+    Use the web interface to manage jobs
+  </Card>
+</CardGroup>
+
+## Complete Example
+
+Here's a complete workflow script:
+
+```bash
+#!/bin/bash
+
+# Start Scrapyd (in background)
+scrapyd &
+SCRAPYD_PID=$!
+sleep 2
+
+# Navigate to project
+cd myproject
+
+# Build egg
+python setup.py bdist_egg
+
+# Deploy
+curl http://localhost:6800/addversion.json \
+  -F project=myproject \
+  -F version=1.0 \
+  -F egg=@dist/myproject-1.0-py3.12.egg
+
+# Schedule spider
+JOB_ID=$(curl -s http://localhost:6800/schedule.json \
+  -d project=myproject \
+  -d spider=example | jq -r '.jobid')
+
+echo "Scheduled job: $JOB_ID"
+
+# Monitor until finished
+while true; do
+  STATE=$(curl -s "http://localhost:6800/status.json?job=$JOB_ID" | jq -r '.currstate')
+  echo "Job state: $STATE"
+  
+  if [ "$STATE" = "finished" ] || [ "$STATE" = "null" ]; then
+    break
+  fi
+  
+  sleep 5
+done
+
+# View log
+curl "http://localhost:6800/logs/myproject/example/$JOB_ID.log"
+
+# Stop Scrapyd
+kill $SCRAPYD_PID
+```

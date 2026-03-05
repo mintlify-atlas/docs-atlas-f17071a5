@@ -1,0 +1,272 @@
+---
+title: 'listspiders.json'
+description: 'List spiders in a project version'
+---
+
+## Overview
+
+Get all spiders available in a specific version of a project. This endpoint runs `scrapy list` to discover spiders.
+
+## HTTP Method
+
+```
+GET /listspiders.json
+```
+
+## Parameters
+
+<ParamField query="project" type="string" required>
+  The project name
+</ParamField>
+
+<ParamField query="_version" type="string">
+  The project version (defaults to the latest version)
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success, `"error"` on failure
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+<ResponseField name="spiders" type="array" required>
+  Array of spider names (strings)
+</ResponseField>
+
+## Examples
+
+### List Spiders (Latest Version)
+
+```bash
+curl http://localhost:6800/listspiders.json?project=myproject
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "spiders": ["spider1", "spider2", "spider3"]
+}
+```
+
+### List Spiders (Specific Version)
+
+```bash
+curl "http://localhost:6800/listspiders.json?project=myproject&_version=r23"
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "spiders": ["spider1", "spider2"]
+}
+```
+
+### With Authentication
+
+```bash
+curl -u username:password http://localhost:6800/listspiders.json?project=myproject
+```
+
+## Error Cases
+
+### Project Not Found
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "project 'myproject' not found"
+}
+```
+
+### Version Not Found
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "version 'r99' not found"
+}
+```
+
+### Missing Required Parameter
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "'project' parameter is required"
+}
+```
+
+## Use Cases
+
+### List All Spiders
+
+```python
+import requests
+
+response = requests.get("http://localhost:6800/listspiders.json?project=myproject")
+spiders = response.json()['spiders']
+
+print(f"Available spiders: {len(spiders)}")
+for spider in spiders:
+    print(f"  - {spider}")
+```
+
+### Check if Spider Exists
+
+```python
+import requests
+
+def spider_exists(project, spider_name, version=None):
+    params = {"project": project}
+    if version:
+        params["_version"] = version
+    
+    response = requests.get(
+        "http://localhost:6800/listspiders.json",
+        params=params
+    )
+    
+    if response.json()['status'] == 'error':
+        return False
+    
+    return spider_name in response.json()['spiders']
+
+if spider_exists("myproject", "spider1"):
+    print("Spider exists")
+else:
+    print("Spider not found")
+```
+
+### Schedule All Spiders
+
+```python
+import requests
+
+project = "myproject"
+
+# Get all spiders
+response = requests.get(f"http://localhost:6800/listspiders.json?project={project}")
+spiders = response.json()['spiders']
+
+# Schedule each spider
+for spider in spiders:
+    schedule_response = requests.post(
+        "http://localhost:6800/schedule.json",
+        data={"project": project, "spider": spider}
+    )
+    
+    if schedule_response.json()['status'] == 'ok':
+        jobid = schedule_response.json()['jobid']
+        print(f"Scheduled {spider}: {jobid}")
+    else:
+        print(f"Failed to schedule {spider}")
+```
+
+### Compare Spiders Across Versions
+
+```python
+import requests
+
+project = "myproject"
+
+# Get all versions
+versions_response = requests.get(f"http://localhost:6800/listversions.json?project={project}")
+versions = versions_response.json()['versions']
+
+for version in versions:
+    response = requests.get(
+        f"http://localhost:6800/listspiders.json?project={project}&_version={version}"
+    )
+    spiders = response.json()['spiders']
+    print(f"{version}: {', '.join(spiders)}")
+```
+
+Output:
+```
+r20: spider1, spider2
+r21: spider1, spider2, spider3
+r22: spider1, spider2, spider3
+```
+
+### Generate Spider Documentation
+
+```python
+import requests
+
+project = "myproject"
+
+# Get all spiders
+response = requests.get(f"http://localhost:6800/listspiders.json?project={project}")
+spiders = response.json()['spiders']
+
+print(f"# {project} Spiders\n")
+print(f"Total: {len(spiders)} spiders\n")
+
+for spider in sorted(spiders):
+    print(f"## {spider}")
+    print(f"""To schedule this spider:
+```bash
+curl http://localhost:6800/schedule.json \\
+  -d project={project} \\
+  -d spider={spider}
+```
+""")
+```
+
+## How It Works
+
+When you call this endpoint, Scrapyd:
+
+1. Loads the project's egg file for the specified version
+2. Runs `scrapy list` to discover spiders
+3. Caches the result for faster subsequent requests
+4. Returns the list of spider names
+
+<Info>
+  Spider lists are cached per project and version. The cache is invalidated when:
+  - A new version is added with [addversion.json](/api/add-version)
+  - A version is deleted with [deleteversion.json](/api/delete-version)
+  - The project is deleted with [deleteproject.json](/api/delete-project)
+</Info>
+
+## Configuration File Projects
+
+<Note>
+  If your project is configured via a `scrapy.cfg` file (not uploaded via [addversion.json](/api/add-version)), don't set the `_version` parameter.
+</Note>
+
+For local projects:
+
+```bash
+curl http://localhost:6800/listspiders.json?project=myproject
+```
+
+## Notes
+
+<Tip>
+  The spider list is determined by Scrapy's spider discovery mechanism. Any class that inherits from `scrapy.Spider` and is in the project's spiders module will be listed.
+</Tip>
+
+<Warning>
+  If `scrapy list` fails (e.g., due to import errors in your project), this endpoint will return an error. Check your project code for issues.
+</Warning>
+
+## Related Endpoints
+
+- [schedule.json](/api/schedule) - Schedule a spider to run
+- [listversions.json](/api/list-versions) - List available versions
+- [listprojects.json](/api/list-projects) - List all projects
+- [addversion.json](/api/add-version) - Add a new version

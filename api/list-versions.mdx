@@ -1,0 +1,220 @@
+---
+title: 'listversions.json'
+description: 'List versions of a project'
+---
+
+## Overview
+
+Get all versions of a project from egg storage, sorted in version order with the latest version last.
+
+## HTTP Method
+
+```
+GET /listversions.json
+```
+
+## Parameters
+
+<ParamField query="project" type="string" required>
+  The project name
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success, `"error"` on failure
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+<ResponseField name="versions" type="array" required>
+  Array of version strings, sorted in version order
+  
+  The latest version is last in the array.
+</ResponseField>
+
+## Examples
+
+### List Versions
+
+```bash
+curl http://localhost:6800/listversions.json?project=myproject
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "versions": ["r99", "r156"]
+}
+```
+
+**Response (no versions):**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "versions": []
+}
+```
+
+### With Authentication
+
+```bash
+curl -u username:password http://localhost:6800/listversions.json?project=myproject
+```
+
+## Error Cases
+
+### Project Not Found
+
+If the project doesn't exist:
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "versions": []
+}
+```
+
+<Note>
+  Unlike other endpoints, this does not return an error for non-existent projects. It returns an empty array instead.
+</Note>
+
+## Version Ordering
+
+Scrapyd uses Python's [packaging.version.Version](https://packaging.pypa.io/en/stable/version.html) to parse and sort version numbers. This means:
+
+- Semantic versions are sorted correctly: `1.0.0` < `1.0.1` < `1.1.0` < `2.0.0`
+- Pre-release versions are handled: `1.0.0a1` < `1.0.0b1` < `1.0.0rc1` < `1.0.0`
+- Dev versions are supported: `1.0.0.dev1` < `1.0.0`
+- Custom schemes work: `r1` < `r2` < `r10` (not `r1` < `r10` < `r2`)
+
+## Use Cases
+
+### Get Latest Version
+
+```bash
+curl -s http://localhost:6800/listversions.json?project=myproject | \
+  python -c "import sys, json; versions = json.load(sys.stdin)['versions']; print(versions[-1] if versions else 'none')"
+```
+
+### Get Version Count
+
+```python
+import requests
+
+response = requests.get("http://localhost:6800/listversions.json?project=myproject")
+data = response.json()
+
+print(f"Total versions: {len(data['versions'])}")
+if data['versions']:
+    print(f"Latest version: {data['versions'][-1]}")
+```
+
+### List All Versions
+
+```python
+import requests
+
+response = requests.get("http://localhost:6800/listversions.json?project=myproject")
+versions = response.json()['versions']
+
+print("Available versions:")
+for version in versions:
+    print(f"  - {version}")
+```
+
+### Check Version Exists
+
+```python
+import requests
+
+def version_exists(project, version):
+    response = requests.get(
+        f"http://localhost:6800/listversions.json?project={project}"
+    )
+    data = response.json()
+    return version in data['versions']
+
+if version_exists("myproject", "r23"):
+    print("Version exists")
+else:
+    print("Version not found")
+```
+
+### Delete Old Versions
+
+```python
+import requests
+
+project = "myproject"
+keep_latest = 5  # Keep only the 5 most recent versions
+
+# Get all versions
+response = requests.get(f"http://localhost:6800/listversions.json?project={project}")
+versions = response.json()['versions']
+
+# Delete old versions (all except the last N)
+if len(versions) > keep_latest:
+    old_versions = versions[:-keep_latest]
+    
+    for version in old_versions:
+        delete_response = requests.post(
+            "http://localhost:6800/delversion.json",
+            data={"project": project, "version": version}
+        )
+        
+        if delete_response.json()['status'] == 'ok':
+            print(f"Deleted version: {version}")
+        else:
+            print(f"Failed to delete {version}: {delete_response.json()}")
+```
+
+### Compare Versions Across Nodes
+
+```python
+import requests
+
+nodes = [
+    "http://node1:6800",
+    "http://node2:6800",
+    "http://node3:6800"
+]
+
+project = "myproject"
+
+for node in nodes:
+    response = requests.get(f"{node}/listversions.json?project={project}")
+    versions = response.json()['versions']
+    latest = versions[-1] if versions else "none"
+    
+    print(f"{node}: {latest} ({len(versions)} versions)")
+```
+
+## Notes
+
+<Info>
+  The latest version (last in the array) is used by default when scheduling jobs without specifying the `_version` parameter.
+</Info>
+
+<Tip>
+  Use semantic versioning (e.g., `1.0.0`, `1.0.1`, `1.1.0`) for predictable sorting. Scrapyd uses the standard Python packaging library to parse versions.
+</Tip>
+
+<Warning>
+  If you use custom version schemes, test them to ensure they sort correctly. For example, `r1`, `r2`, ..., `r10` works, but `v1`, `v2`, ..., `v10` may not sort as expected.
+</Warning>
+
+## Related Endpoints
+
+- [addversion.json](/api/add-version) - Add a new version
+- [deleteversion.json](/api/delete-version) - Delete a specific version
+- [listprojects.json](/api/list-projects) - List all projects
+- [listspiders.json](/api/list-spiders) - List spiders in a version

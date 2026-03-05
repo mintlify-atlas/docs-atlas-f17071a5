@@ -1,0 +1,229 @@
+---
+title: Deploying Projects
+description: Learn how to package and deploy Scrapy projects to Scrapyd using eggs and the addversion.json API
+---
+
+## Overview
+
+Scrapyd uses Python eggs to package and deploy Scrapy projects. This approach allows you to version your projects and deploy them to one or more Scrapyd instances.
+
+## Packaging Projects as Eggs
+
+### Using scrapyd-deploy
+
+The recommended way to package and deploy projects is using the `scrapyd-deploy` command from the [scrapyd-client](https://github.com/scrapy/scrapyd-client) package.
+
+<Steps>
+  <Step title="Install scrapyd-client">
+    ```bash
+    pip install scrapyd-client
+    ```
+  </Step>
+
+  <Step title="Configure scrapy.cfg">
+    Create or edit `scrapy.cfg` in your project root:
+
+    ```ini
+    [settings]
+    default = myproject.settings
+
+    [deploy]
+    url = http://localhost:6800
+    project = myproject
+    ```
+  </Step>
+
+  <Step title="Deploy your project">
+    ```bash
+    scrapyd-deploy
+    ```
+  </Step>
+</Steps>
+
+### Building Eggs Manually
+
+You can also build eggs manually for custom deployment workflows:
+
+```bash
+scrapyd-deploy --build-egg=myproject.egg
+```
+
+This creates an egg file without deploying it.
+
+<Note>
+  The egg must set an entry point to your Scrapy settings for Scrapyd to locate your project configuration.
+</Note>
+
+## Setting Up Entry Points
+
+Your `setup.py` must include a Scrapy entry point:
+
+```python
+from setuptools import setup, find_packages
+
+setup(
+    name='myproject',
+    version='1.0',
+    packages=find_packages(),
+    entry_points={'scrapy': ['settings = myproject.settings']},
+)
+```
+
+The entry point tells Scrapyd where to find your project's settings module.
+
+## Using the addversion.json API
+
+You can deploy projects programmatically using the `addversion.json` endpoint.
+
+### API Reference
+
+<ParamField path="project" type="string" required>
+  The project name
+</ParamField>
+
+<ParamField path="version" type="string" required>
+  The project version. Scrapyd uses [packaging.version.Version](https://packaging.pypa.io/en/stable/version.html) to interpret version numbers.
+</ParamField>
+
+<ParamField path="egg" type="file" required>
+  A Python egg file containing the project's code. When using curl, use `egg=@path` (not `egg=path`).
+</ParamField>
+
+### Example Request
+
+```bash
+curl http://localhost:6800/addversion.json \
+  -F project=myproject \
+  -F version=r23 \
+  -F egg=@myproject.egg
+```
+
+### Example Response
+
+```json
+{
+  "node_name": "mynodename",
+  "status": "ok",
+  "spiders": 3
+}
+```
+
+The `spiders` field indicates how many spiders were found in the uploaded project.
+
+<Warning>
+  If you get an error about the egg not being a ZIP file when using curl, make sure you're using `egg=@myproject.egg` (with the `@` symbol) and not `egg=myproject.egg`.
+</Warning>
+
+## Version Management
+
+### How Versions Are Stored
+
+Scrapyd stores eggs in the `eggs_dir` directory (default: `eggs/`):
+
+```
+eggs/
+├── myproject/
+│   ├── r23.egg
+│   ├── r24.egg
+│   └── r25.egg
+└── otherproject/
+    └── 1_0.egg
+```
+
+Version names are sanitized by replacing non-alphanumeric characters (except `-` and `_`) with underscores.
+
+### Listing Versions
+
+Check which versions are deployed:
+
+```bash
+curl http://localhost:6800/listversions.json?project=myproject
+```
+
+```json
+{
+  "node_name": "mynodename",
+  "status": "ok",
+  "versions": ["r23", "r24", "r25"]
+}
+```
+
+Versions are returned in sorted order, with the latest version last.
+
+### Default Version
+
+When scheduling spiders, Scrapyd uses the latest version by default (the last item in the versions list). You can override this using the `_version` parameter.
+
+### Deleting Versions
+
+Remove a specific version:
+
+```bash
+curl http://localhost:6800/delversion.json \
+  -d project=myproject \
+  -d version=r23
+```
+
+If you delete all versions of a project, the project itself is automatically removed.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use semantic versioning">
+    Version your projects using semantic versioning (e.g., `1.0.0`, `1.0.1`) or incremental identifiers (e.g., `r23`, `r24`) for better organization.
+  </Accordion>
+
+  <Accordion title="Test before deploying">
+    Always test your spiders locally with `scrapy crawl` before deploying to Scrapyd.
+  </Accordion>
+
+  <Accordion title="Keep old versions">
+    Maintain at least one previous version in case you need to rollback. You can schedule spiders with specific versions using the `_version` parameter.
+  </Accordion>
+
+  <Accordion title="Automate deployments">
+    Integrate `scrapyd-deploy` into your CI/CD pipeline to automate deployments on successful builds.
+  </Accordion>
+
+  <Accordion title="Use authentication">
+    Enable [basic authentication](/configuration/security#basic-authentication) to protect your deployment endpoints from unauthorized access.
+  </Accordion>
+</AccordionGroup>
+
+## Docker Deployment
+
+When using Docker, you can pre-package eggs into your image. See the example in `source/docs/deploy.rst:13-23`:
+
+```dockerfile
+FROM python as build-stage
+RUN pip install --no-cache-dir scrapyd-client
+WORKDIR /workdir
+COPY . .
+RUN scrapyd-deploy --build-egg=myproject.egg
+
+FROM python:alpine
+RUN mkdir -p /src/eggs/myproject
+COPY --from=build-stage /workdir/myproject.egg /src/eggs/myproject/1.egg
+```
+
+This builds the egg in a build stage and copies it into the final image at a known location.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Project not found after deployment">
+    Ensure your egg has the correct entry point in `setup.py` and that the project name matches what you specified in the deployment.
+  </Accordion>
+
+  <Accordion title="Egg is not a ZIP file error">
+    When using curl, make sure to use `-F egg=@myproject.egg` (with the `@` symbol). The `@` tells curl to upload the file contents.
+  </Accordion>
+
+  <Accordion title="Spiders not showing up">
+    Check that your spider files are included in the egg. The `scrapyd-deploy --build-egg` command should include all modules in your package.
+  </Accordion>
+
+  <Accordion title="Version sanitization">
+    If your version contains special characters, they will be replaced with underscores in the filename (e.g., `v1.0.0` becomes `v1_0_0.egg`).
+  </Accordion>
+</AccordionGroup>

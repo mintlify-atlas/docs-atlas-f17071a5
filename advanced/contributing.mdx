@@ -1,0 +1,431 @@
+---
+title: Contributing to Scrapyd
+description: How to contribute to Scrapyd development
+---
+
+Scrapyd welcomes contributions from the community. This guide will help you get started with development, testing, and submitting contributions.
+
+## Getting Started
+
+<Info>
+  Before contributing, read the [Scrapy Contribution Docs](http://scrapy.readthedocs.org/en/latest/contributing.html) for tips on writing patches, reporting bugs, and coding style.
+</Info>
+
+### Development Setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/scrapy/scrapyd.git
+    cd scrapyd
+    ```
+  </Step>
+  
+  <Step title="Install in editable mode">
+    Install Scrapyd with development dependencies:
+    
+    ```bash
+    pip install -e .[test,docs]
+    ```
+    
+    This installs:
+    - Scrapyd in editable mode (`-e`)
+    - Test dependencies (`pytest`, etc.)
+    - Documentation dependencies (Sphinx, etc.)
+  </Step>
+  
+  <Step title="Verify installation">
+    ```bash
+    scrapyd --version
+    python -m scrapyd.runner --help
+    ```
+  </Step>
+</Steps>
+
+## Project Structure
+
+Key directories and files:
+
+```
+scrapyd/
+├── scrapyd/              # Main package
+│   ├── __init__.py
+│   ├── app.py           # Application initialization
+│   ├── launcher.py      # Process management
+│   ├── poller.py        # Job queue polling
+│   ├── scheduler.py     # Job scheduling
+│   ├── interfaces.py    # Zope interfaces
+│   ├── eggstorage.py    # Egg storage implementations
+│   ├── spiderqueue.py   # Spider queue implementations
+│   ├── environ.py       # Environment configuration
+│   ├── jobstorage.py    # Job storage implementations
+│   ├── webservice.py    # JSON API endpoints
+│   ├── website.py       # Web interface
+│   └── runner.py        # Scrapy process runner
+├── tests/               # Unit tests
+├── integration_tests/   # Integration tests
+├── docs/                # Documentation
+└── setup.py            # Package configuration
+```
+
+## Running Tests
+
+### Unit Tests
+
+Run the full test suite:
+
+```bash
+pytest tests
+```
+
+Run specific test files:
+
+```bash
+pytest tests/test_launcher.py
+pytest tests/test_interfaces.py
+```
+
+Run specific test functions:
+
+```bash
+pytest tests/test_launcher.py::test_launcher_start
+```
+
+With verbose output:
+
+```bash
+pytest -v tests
+```
+
+With coverage report:
+
+```bash
+pytest --cov=scrapyd --cov-report=html tests
+```
+
+### Integration Tests
+
+Integration tests require a running Scrapyd instance:
+
+<Steps>
+  <Step title="Create test configuration">
+    ```bash
+    printf "[scrapyd]\nusername = hello12345\npassword = 67890world\n" > scrapyd.conf
+    ```
+  </Step>
+  
+  <Step title="Create logs directory">
+    ```bash
+    mkdir logs
+    ```
+  </Step>
+  
+  <Step title="Start Scrapyd">
+    ```bash
+    scrapyd &
+    ```
+    
+    The `&` runs it in the background.
+  </Step>
+  
+  <Step title="Run integration tests">
+    ```bash
+    pytest integration_tests
+    ```
+  </Step>
+  
+  <Step title="Stop Scrapyd">
+    ```bash
+    pkill -f scrapyd
+    ```
+  </Step>
+</Steps>
+
+## Development Guidelines
+
+### Configuration Handling
+
+<Warning>
+  Pass the `config` object to a class's `__init__` method, but don't store it on the instance ([#526](https://github.com/scrapy/scrapyd/issues/526)).
+</Warning>
+
+**Good:**
+
+```python
+class MyComponent:
+    def __init__(self, config):
+        self.some_value = config.get('some_setting')
+        # Don't store: self.config = config
+```
+
+**Bad:**
+
+```python
+class MyComponent:
+    def __init__(self, config):
+        self.config = config  # Avoid this
+```
+
+### Working with Processes
+
+Scrapyd starts Scrapy processes in several places:
+
+- **Launcher** (`scrapyd/launcher.py`) - Runs `scrapy crawl`
+- **schedule.json** webservice - Runs `scrapy list` to check spider exists
+- **addversion.json** webservice - Runs `scrapy list` to return spider count  
+- **listspiders.json** webservice - Runs `scrapy list` to return spider names
+
+### Environment Variables
+
+Scrapyd uses environment variables to communicate with Scrapy processes:
+
+<ParamField path="SCRAPY_PROJECT" type="string">
+  The project to use. Set by `Environment.get_environment()` and read by `scrapyd/runner.py`.
+</ParamField>
+
+<ParamField path="SCRAPYD_EGG_VERSION" type="string">
+  The version of the project egg to activate. Set by `Environment.get_environment()` and read by `scrapyd/runner.py`.
+</ParamField>
+
+<ParamField path="SCRAPY_SETTINGS_MODULE" type="string">
+  The Python path to the settings module. Can come from:
+  - Egg entry points (standard)
+  - `[settings]` section in configuration (legacy)
+</ParamField>
+
+### Job Lifecycle
+
+Understand the three job states:
+
+#### Pending Jobs
+
+A **pending job** is a `dict` accessible via `ISpiderQueue`:
+
+```python
+{
+    "name": "myspider",
+    "_job": "abc123",
+    "_version": "1.0.0",
+    "settings": {"SETTING": "value"},
+    "arg1": "value1",  # Spider arguments
+}
+```
+
+#### Running Jobs
+
+A **running job** is a `ScrapyProcessProtocol` object in `Launcher.processes`:
+
+```python
+{
+    0: ScrapyProcessProtocol(project='myproject', spider='myspider', job='abc123', ...),
+    1: ScrapyProcessProtocol(project='myproject', spider='otherspider', job='def456', ...),
+}
+```
+
+#### Finished Jobs
+
+A **finished job** has these attributes accessible via `IJobStorage`:
+
+- `project` - Project name
+- `spider` - Spider name
+- `job` - Job ID
+- `start_time` - datetime
+- `end_time` - datetime
+- `args` - CLI arguments (optional)
+- `env` - Environment variables (optional)
+
+### Job Data Flow
+
+Key naming differences between states:
+
+| Attribute | ISpiderQueue | IPoller | ScrapyProcessProtocol | IJobStorage |
+|-----------|-------------|---------|---------------------|-------------|
+| Project | *(not specified)* | `_project` | `project` | `project` |
+| Spider | `name` | `_spider` | `spider` | `spider` |
+| Job ID | `_job` | `_job` | `job` | `job` |
+| Version | `_version` | `_version` | ✗ | ✗ |
+| Settings | `settings` | `settings` | `args` (`-s k=v`) | ✗ |
+| Spider args | *(remaining keys)* | *(remaining keys)* | `args` (`-a k=v`) | ✗ |
+
+## Building Documentation
+
+Build the documentation locally:
+
+```bash
+cd docs
+make html
+```
+
+View the built docs:
+
+```bash
+open _build/html/index.html  # macOS
+xdg-open _build/html/index.html  # Linux
+```
+
+## Submitting Contributions
+
+### Reporting Issues
+
+Report bugs and feature requests on [GitHub Issues](https://github.com/scrapy/scrapyd/issues).
+
+Include:
+- **Description** of the issue
+- **Steps to reproduce**
+- **Expected behavior**
+- **Actual behavior**
+- **Scrapyd version** (`scrapyd --version`)
+- **Python version** (`python --version`)
+- **Operating system**
+- **Relevant logs** (with debug logging enabled)
+
+### Creating Pull Requests
+
+<Steps>
+  <Step title="Fork and clone">
+    ```bash
+    git clone https://github.com/YOUR_USERNAME/scrapyd.git
+    cd scrapyd
+    ```
+  </Step>
+  
+  <Step title="Create a branch">
+    ```bash
+    git checkout -b fix-issue-123
+    ```
+  </Step>
+  
+  <Step title="Make your changes">
+    - Write code
+    - Add tests
+    - Update documentation if needed
+  </Step>
+  
+  <Step title="Run tests">
+    ```bash
+    pytest tests
+    ```
+    
+    Ensure all tests pass.
+  </Step>
+  
+  <Step title="Commit your changes">
+    ```bash
+    git add .
+    git commit -m "Fix issue #123: Description of fix"
+    ```
+  </Step>
+  
+  <Step title="Push and create PR">
+    ```bash
+    git push origin fix-issue-123
+    ```
+    
+    Then open a pull request on GitHub.
+  </Step>
+</Steps>
+
+### PR Guidelines
+
+- **Include tests** for new functionality
+- **Update documentation** for user-facing changes
+- **Follow coding style** (PEP 8)
+- **Write descriptive commit messages**
+- **Reference related issues** (e.g., "Fixes #123")
+- **Keep PRs focused** - one feature or fix per PR
+
+## Code Style
+
+Scrapyd follows PEP 8 with some conventions:
+
+- **Line length**: 120 characters max
+- **Imports**: Grouped and sorted (stdlib, third-party, local)
+- **Docstrings**: Use reStructuredText format
+- **Type hints**: Encouraged for new code
+
+Run linting:
+
+```bash
+ruff check scrapyd
+```
+
+Format code:
+
+```bash
+ruff format scrapyd
+```
+
+## Testing Best Practices
+
+### Writing Tests
+
+**Use pytest fixtures:**
+
+```python
+import pytest
+from scrapyd.config import Config
+
+@pytest.fixture
+def config():
+    return Config()
+
+def test_something(config):
+    assert config.get('http_port') == '6800'
+```
+
+**Test interface implementations:**
+
+```python
+from zope.interface.verify import verifyObject
+from scrapyd.interfaces import IEggStorage
+from scrapyd.eggstorage import FilesystemEggStorage
+
+def test_filesystem_egg_storage_implements_interface(config):
+    storage = FilesystemEggStorage(config)
+    verifyObject(IEggStorage, storage)
+```
+
+**Mock Twisted components:**
+
+```python
+from twisted.trial import unittest
+from twisted.internet import defer
+
+class MyTest(unittest.TestCase):
+    @defer.inlineCallbacks
+    def test_async_operation(self):
+        result = yield some_async_function()
+        self.assertEqual(result, expected)
+```
+
+## Important Notes
+
+<Warning>
+  Never use git commands with the `-i` flag (like `git rebase -i` or `git add -i`) as they require interactive input which is not supported in automated environments.
+</Warning>
+
+<Note>
+  When adding new components, ensure they:
+  - Implement the appropriate Zope interface
+  - Accept `config` as first `__init__` parameter
+  - Include comprehensive tests
+  - Are documented in the appropriate section
+</Note>
+
+## Getting Help
+
+If you need help contributing:
+
+- **GitHub Discussions** - Ask questions about development
+- **GitHub Issues** - For bug reports and feature requests
+- **Scrapy Community** - Join the Scrapy community channels
+
+## Resources
+
+- [Scrapyd GitHub Repository](https://github.com/scrapy/scrapyd)
+- [Scrapyd Documentation](https://scrapyd.readthedocs.io/)
+- [Scrapy Documentation](https://docs.scrapy.org/)
+- [Twisted Documentation](https://docs.twisted.org/)
+- [Zope Interface Documentation](https://zopeinterface.readthedocs.io/)
+
+Thank you for contributing to Scrapyd!

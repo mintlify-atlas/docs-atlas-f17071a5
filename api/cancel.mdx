@@ -1,0 +1,185 @@
+---
+title: 'cancel.json'
+description: 'Cancel a pending or running job'
+---
+
+## Overview
+
+Cancel a job by removing it from the queue (if pending) or sending a termination signal to the process (if running).
+
+## HTTP Method
+
+```
+POST /cancel.json
+```
+
+## Parameters
+
+<ParamField path="project" type="string" required>
+  The project name
+</ParamField>
+
+<ParamField path="job" type="string" required>
+  The job ID to cancel
+</ParamField>
+
+<ParamField path="signal" type="string">
+  The signal to send to the Scrapy process (for running jobs)
+  
+  **Default:** `"INT"` on Unix-like systems, `"21"` (SIGBREAK) on Windows
+  
+  **Accepted values:**
+  - An integer (e.g., `"9"` for SIGKILL)
+  - `"HUP"` - Hangup signal
+  - `"INT"` - Interrupt signal (Ctrl+C)
+  - `"KILL"` - Kill signal (cannot be caught)
+  - `"STOP"` - Stop signal
+  - `"TERM"` - Termination signal
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string" required>
+  `"ok"` on success, `"error"` on failure
+</ResponseField>
+
+<ResponseField name="node_name" type="string" required>
+  The name of the Scrapyd node
+</ResponseField>
+
+<ResponseField name="prevstate" type="string | null">
+  The previous state of the job:
+  - `"pending"` - Job was in the queue
+  - `"running"` - Job was running
+  - `null` - Job was not found
+</ResponseField>
+
+## Examples
+
+### Cancel a Job
+
+Cancel a job using the default signal:
+
+```bash
+curl http://localhost:6800/cancel.json \
+  -d project=myproject \
+  -d job=6487ec79947edab326d6db28a2d86511e8247444
+```
+
+**Response (running job):**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "prevstate": "running"
+}
+```
+
+**Response (pending job):**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "prevstate": "pending"
+}
+```
+
+**Response (job not found):**
+
+```json
+{
+  "status": "ok",
+  "node_name": "mynodename",
+  "prevstate": null
+}
+```
+
+### Cancel with Custom Signal
+
+Send a SIGTERM signal instead of SIGINT:
+
+```bash
+curl http://localhost:6800/cancel.json \
+  -d project=myproject \
+  -d job=6487ec79947edab326d6db28a2d86511e8247444 \
+  -d signal=TERM
+```
+
+### Force Kill a Job
+
+Send SIGKILL to immediately terminate a job:
+
+```bash
+curl http://localhost:6800/cancel.json \
+  -d project=myproject \
+  -d job=6487ec79947edab326d6db28a2d86511e8247444 \
+  -d signal=KILL
+```
+
+Or using the numeric signal:
+
+```bash
+curl http://localhost:6800/cancel.json \
+  -d project=myproject \
+  -d job=6487ec79947edab326d6db28a2d86511e8247444 \
+  -d signal=9
+```
+
+## Error Cases
+
+### Project Not Found
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "project 'myproject' not found"
+}
+```
+
+### Missing Required Parameter
+
+```json
+{
+  "status": "error",
+  "node_name": "mynodename",
+  "message": "'job' parameter is required"
+}
+```
+
+## How It Works
+
+### For Pending Jobs
+
+The job is removed from the project's spider queue. It will never start running.
+
+### For Running Jobs
+
+A signal is sent to the Scrapy process:
+
+1. The process receives the signal (e.g., SIGINT)
+2. Scrapy's signal handlers are triggered
+3. The spider can perform cleanup in its signal handlers
+4. The process terminates
+
+<Warning>
+  Using `SIGKILL` (`signal=KILL` or `signal=9`) terminates the process immediately without allowing cleanup. Use this only when necessary.
+</Warning>
+
+## Notes
+
+<Info>
+  If `prevstate` is `null`, the job was not found in the pending queue or running processes. It may have already finished, or the job ID may be incorrect.
+</Info>
+
+<Tip>
+  On Windows, the default signal is `"21"` (SIGBREAK) because Windows processes don't support SIGINT in the same way as Unix-like systems.
+</Tip>
+
+## Related Endpoints
+
+- [schedule.json](/api/schedule) - Schedule a new job
+- [status.json](/api/status) - Check if a job exists and its current state
+- [listjobs.json](/api/list-jobs) - View all pending and running jobs
